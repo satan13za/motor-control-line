@@ -1,100 +1,145 @@
-const express = require('express');
-const { Client } = require('@line/bot-sdk');
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 
-const app = express();
-app.use(express.json());
+// --- 🌐 ตั้งค่าเน็ตเวิร์กและลิงก์เซิร์ฟเวอร์ของคุณ ---
+const char* ssid = "Wokwi-GUEST"; 
+const char* password = "";        
+const char* commandUrl = "https://motor-control-line.onrender.com/api/motor/command";
+const char* reportUrl  = "https://motor-control-line.onrender.com/api/motor/report";
 
-// --- ⚙️ ตั้งค่าระบบ LINE Bot ---
-const config = {
-  channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN || 'YOUR_ACCESS_TOKEN',
-  channelSecret: process.env.CHANNEL_SECRET || 'YOUR_SECRET'
-};
-const client = new Client(config);
+// --- 📌 กำหนดขาพินอุปกรณ์ตามจริง ---
+#define LED_GREEN  12  // ไฟ RUN (สีเขียว)
+#define LED_YELLOW 14  // ไฟ STANDBY (สีเหลือง)
+#define LED_RED    26  // ไฟ FAULT (สีแดง)
+#define BTN_FAULT  21  // ปุ่มกด TEST FAULT (ขา 21)
 
-// --- 📊 ตัวแปรควบคุมสถานะระบบ (Global States) ---
-let targetCommand = "OFF";     // คำสั่งที่รอส่งให้บอร์ด ("ON" / "OFF")
-let motorState = "STANDBY";    // สถานะจริงจากบอร์ด ("STANDBY" / "RUNNING" / "FAULT")
-let targetUserId = "";         // จำ ID LINE ของผู้ใช้งาน
-let lastNotifiedState = "";    // ตัวจดจำสถานะล่าสุดเพื่อกันส่งไลน์ซ้ำ
-let lastNotificationTime = 0;  // 🛡️ Anti-Spam Timer (ป้องกันไลน์รั่ว)
+String localState = "STANDBY"; // ตัวจำสถานะภายในบอร์ด ("STANDBY", "RUNNING", "FAULT")
+unsigned long lastCheckTime = 0;
+const unsigned long checkInterval = 2000; // วิ่งไปถามไลน์ทุกๆ 2 วินาที
 
-// 📌 [Route 1] หน้าแรกสุด เอาไว้เช็คบนเว็บเบราว์เซอร์
-app.get('/', (req, res) => {
-  res.send(`🟢 Server Alive | State: ${motorState} | Command: ${targetCommand}`);
-});
+void sendStatusReport(String state);
 
-// 📌 [Route 2] สำหรับ ESP32 มาดึงคำสั่งไปทำงาน (GET)
-app.get('/api/motor/command', (req, res) => {
-  res.json({ command: targetCommand });
-});
-
-// 📌 [Route 3] สำหรับ ESP32 ยิงรายงานสถานะกลับมา (POST)
-app.post('/api/motor/report', (req, res) => {
-  const { state } = req.body;
-  if (!state) return res.status(400).send("Invalid State Data");
-
-  motorState = state;
-  console.log(`[ESP32 Report] Local Hardware State is: ${motorState}`);
-
-  const now = Date.now();
+void setup() {
+  Serial.begin(115200);
   
-  // 🛡️ ANTI-SPAM SHIELD: ไลน์จะเด้งเฉพาะตอนสถานะ "เปลี่ยน" และห้ามส่งถี่เกินกว่า 3 วินาทีเด็ดขาด!
-  if (motorState !== lastNotifiedState && targetUserId && (now - lastNotificationTime > 3000)) {
-    lastNotifiedState = motorState; 
-    lastNotificationTime = now; 
+  pinMode(LED_GREEN, OUTPUT);
+  pinMode(LED_YELLOW, OUTPUT);
+  pinMode(LED_RED, OUTPUT);
+  pinMode(BTN_FAULT, INPUT_PULLUP); // ใช้ Pullup ภายใน ขา 21
 
-    let alertText = "";
-    if (motorState === "RUNNING") alertText = "🟢 มอเตอร์เริ่มทำงานแล้ว (RUNNING)";
-    if (motorState === "STANDBY") alertText = "🟡 มอเตอร์หยุดทำงาน/สแตนบาย (STANDBY)";
-    if (motorState === "FAULT") alertText = "🚨 ตู้ควบคุมเกิดเหตุขัดข้อง! ระบบติดสถานะ FAULT";
+  // เริ่มต้นตู้ควบคุม: ให้ไฟสีเหลืองติดแสตนบายไว้
+  digitalWrite(LED_GREEN, LOW);
+  digitalWrite(LED_YELLOW, HIGH);
+  digitalWrite(LED_RED, LOW);
 
-    // ยิง Push Notification หาผู้ใช้ในไลน์ทันที
-    client.pushMessage(targetUserId, { type: 'text', text: alertText })
-      .then(() => console.log(`[LINE Push Success] Notified: ${motorState}`))
-      .catch((err) => console.error('[LINE Push Error]', err));
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to Wokwi WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi Connected Successfully!");
+  
+  // รายงานตัวนัดแรกกับเซิร์ฟเวอร์
+  sendStatusReport(localState); 
+}
+
+void loop() {
+  // -------------------------------------------------------------
+  // จังหวะที่ 1: ตรวจจับปุ่ม Fault (ขา 21) แบบเรียลไทม์ + ระบบ Debounce
+  // -------------------------------------------------------------
+  bool isButtonPressed = (digitalRead(BTN_FAULT) == LOW);
+
+  if (isButtonPressed) {
+    // ถ้าปุ่มโดนกด และตู้ยังไม่รับรู้ว่าเป็น FAULT -> ล็อกสถานะทันที
+    if (localState != "FAULT") {
+      localState = "FAULT";
+      digitalWrite(LED_GREEN, LOW);
+      digitalWrite(LED_YELLOW, LOW);
+      digitalWrite(LED_RED, HIGH);
+      Serial.println("🚨 EMERGENCY: ตรวจพบเหตุขัดข้องที่ปุ่มกด ขา 21!");
+      
+      sendStatusReport("FAULT");
+      delay(400); // 🛡️ หน่วงเวลาสั้นๆ เพื่อให้แรงดันไฟฟ้าคงที่ ป้องกันการยิงคำสั่งรัวๆ
+    }
+  } 
+  else {
+    // ถ้าปล่อยนิ้วออกจากปุ่มแล้ว และตู้ยังค้างสถานะ FAULT -> ให้ดึงกลับมาปกติ
+    if (localState == "FAULT") {
+      localState = "STANDBY";
+      digitalWrite(LED_GREEN, LOW);
+      digitalWrite(LED_YELLOW, HIGH);
+      digitalWrite(LED_RED, LOW);
+      Serial.println("🔄 RECOVERY: เหตุขัดข้องคลี่คลาย ระบบกลับสู่สแตนบาย");
+      
+      sendStatusReport("STANDBY");
+      delay(400); // 🛡️ กันสัญญาณกระเพื่อมตอนปล่อยนิ้ว
+    }
   }
 
-  res.json({ status: "success", serverState: motorState });
-});
-
-// 📌 [Route 4] ระบบ Webhook รับคำสั่งจากแอป LINE
-app.post('/webhook', (req, res) => {
-  const events = req.body.events;
-  
-  events.forEach((event) => {
-    if (event.type === 'message' && event.message.type === 'text') {
-      targetUserId = event.source.userId; // บันทึก ID ผู้ใช้ไว้ส่งแจ้งเตือนกลับ
-      const userText = event.message.text.trim();
-      let replyText = "";
-
-      if (userText === "เปิด") {
-        if (motorState === "FAULT") {
-          replyText = "❌ ไม่สามารถเปิดได้! เนื่องจากระบบที่ตู้ควบคุมติดสถานะ FAULT อยู่";
-        } else {
-          targetCommand = "ON";
-          replyText = "⏳ รับคำสั่ง [เปิดมอเตอร์] กำลังส่งสัญญาณไปยังบอร์ด...";
+  // -------------------------------------------------------------
+  // จังหวะที่ 2: ไปดึงคำสั่ง เปิด/ปิด จาก LINE (ทำเฉพาะตอนที่ตู้ไม่ได้พัง)
+  // -------------------------------------------------------------
+  if (millis() - lastCheckTime >= checkInterval) {
+    lastCheckTime = millis();
+    
+    if (localState != "FAULT" && WiFi.status() == WL_CONNECTED) {
+      WiFiClientSecure client;
+      client.setInsecure(); 
+      
+      HTTPClient http;
+      http.begin(client, commandUrl);
+      http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+      
+      int httpCode = http.GET();
+      
+      if (httpCode == 200) {
+        String payload = http.getString();
+        Serial.println("Fetched LINE command: " + payload);
+        
+        // ตรวจสอบคำสั่งผสมสถานะปัจจุบัน เพื่อไม่ให้ยิงรายงานซ้ำซ้อน
+        if (payload.indexOf("ON") >= 0) {
+          if (localState != "RUNNING") {
+            localState = "RUNNING";
+            digitalWrite(LED_GREEN, HIGH);
+            digitalWrite(LED_YELLOW, LOW);
+            digitalWrite(LED_RED, LOW);
+            sendStatusReport("RUNNING");
+          }
+        } 
+        else if (payload.indexOf("OFF") >= 0) {
+          if (localState != "STANDBY") {
+            localState = "STANDBY";
+            digitalWrite(LED_GREEN, LOW);
+            digitalWrite(LED_YELLOW, HIGH);
+            digitalWrite(LED_RED, LOW);
+            sendStatusReport("STANDBY");
+          }
         }
-      } 
-      else if (userText === "ปิด") {
-        targetCommand = "OFF";
-        replyText = "⏳ รับคำสั่ง [ปิดมอเตอร์] กำลังส่งสัญญาณไปยังบอร์ด...";
-      } 
-      else if (userText === "เช็คสถานะ") {
-        replyText = `📊 รายงานระบบไฟฟ้า:\n• สถานะตู้ควบคุม: ${motorState}\n• คำสั่งล่าสุดจากไลน์: ${targetCommand}`;
-      } 
-      else {
-        replyText = "🤖 คำสั่งตู้ควบคุมมอเตอร์:\n• พิมพ์ 'เปิด' เพื่อรันมอเตอร์\n• พิมพ์ 'ปิด' เพื่อหยุดมอเตอร์\n• พิมพ์ 'เช็คสถานะ' เพื่อดูระบบ";
       }
-
-      client.replyMessage(event.replyToken, { type: 'text', text: replyText })
-        .catch((err) => console.error('[LINE Reply Error]', err));
+      http.end();
     }
-  });
+  }
+}
 
-  res.sendStatus(200);
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Clean Architecture Server running on port ${PORT}`);
-});
+void sendStatusReport(String state) {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    
+    HTTPClient http;
+    http.begin(client, reportUrl);
+    http.addHeader("Content-Type", "application/json");
+    
+    String jsonBody = "{\"state\":\"" + state + "\"}";
+    int httpCode = http.POST(jsonBody);
+    
+    Serial.print(">> [Report Sent] State: ");
+    Serial.print(state);
+    Serial.print(" | Server Response: ");
+    Serial.println(httpCode);
+    
+    http.end();
+  }
+}
