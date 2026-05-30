@@ -1,12 +1,38 @@
 const express = require("express");
+const axios = require("axios");
 
 const app = express();
 
 app.use(express.json());
 
+const TOKEN = process.env.CHANNEL_ACCESS_TOKEN;
+
 app.get("/", (req, res) => {
   res.send("Motor Control Server Online");
 });
+
+async function replyMessage(replyToken, text) {
+
+  await axios.post(
+    "https://api.line.me/v2/bot/message/reply",
+    {
+      replyToken: replyToken,
+      messages: [
+        {
+          type: "text",
+          text: text
+        }
+      ]
+    },
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${TOKEN}`
+      }
+    }
+  );
+
+}
 
 app.post("/webhook", async (req, res) => {
 
@@ -25,23 +51,53 @@ app.post("/webhook", async (req, res) => {
     }
 
     const text = event.message.text;
+    const replyToken = event.replyToken;
 
     console.log("Message:", text);
 
     if (text === "เปิด") {
-      console.log("START MOTOR");
+
+      await replyMessage(
+        replyToken,
+        "🟢 รับคำสั่งเปิดมอเตอร์แล้ว"
+      );
+
     }
 
     else if (text === "ปิด") {
-      console.log("STOP MOTOR");
+
+      await replyMessage(
+        replyToken,
+        "🔴 รับคำสั่งปิดมอเตอร์แล้ว"
+      );
+
     }
 
     else if (text === "สถานะ") {
-      console.log("STATUS");
+
+      await replyMessage(
+        replyToken,
+        "📋 สถานะปัจจุบัน : STOP"
+      );
+
     }
 
     else if (text === "reset") {
-      console.log("RESET");
+
+      await replyMessage(
+        replyToken,
+        "✅ รีเซ็ตระบบเรียบร้อย"
+      );
+
+    }
+
+    else {
+
+      await replyMessage(
+        replyToken,
+        "คำสั่งที่ใช้ได้:\nเปิด\nปิด\nสถานะ\nreset"
+      );
+
     }
 
     res.sendStatus(200);
