@@ -4,90 +4,88 @@ const { Client } = require('@line/bot-sdk');
 const app = express();
 app.use(express.json());
 
+// --- ⚙️ ตั้งค่าระบบ LINE Bot (ดึงค่าจาก Environment Variables บน Render) ---
 const config = {
   channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN || 'YOUR_ACCESS_TOKEN',
   channelSecret: process.env.CHANNEL_SECRET || 'YOUR_SECRET'
 };
 const client = new Client(config);
 
-let targetCommand = "OFF";     
-let motorState = "STANDBY";    
-let targetUserId = "";         
-let lastNotifiedState = "";    
-let lastNotificationTime = 0;  
+// --- 📊 ตัวแปรควบคุมสถานะ (Strict State Control) ---
+let targetCommand = "OFF";      // คำสั่งจาก LINE: "ON" หรือ "OFF"
+let currentReportedState = "";  // สถานะล่าสุดที่บอร์ดส่งมา
+let lastNotifiedState = "";     // 🛡️ ตัวล็อก ป้องกันการส่งข้อความซ้ำเข้า LINE
+let targetUserId = "";          // ไอดีไลน์ของผู้ใช้ (จะบันทึกเมื่อมีการพิมพ์ทักเข้ามา)
 
+// 📌 [GET] หน้าแรกสำหรับเช็คสถานะผ่านเบราว์เซอร์
 app.get('/', (req, res) => {
-  res.send(`🟢 Server Alive | State: ${motorState} | Command: ${targetCommand}`);
+  res.send(`🤖 SYSTEM ACTIVE | Command: ${targetCommand} | Board State: ${currentReportedState}`);
 });
 
+// 📌 [GET] สำหรับ ESP32 มาอ่านคำสั่ง เปิด/ปิด
 app.get('/api/motor/command', (req, res) => {
   res.json({ command: targetCommand });
 });
 
-// 📌 ระบบรับรายงานจากบอร์ด ESP32
+// 📌 [POST] สำหรับ ESP32 รายงานสถานะกลับมา (ส่งไลน์เตือนที่นี่)
 app.post('/api/motor/report', (req, res) => {
   const { state } = req.body;
-  if (!state) return res.status(400).send("Invalid State Data");
+  if (!state) return res.status(400).send("No state provided");
 
-  motorState = state;
-  console.log(`[ESP32] State: ${motorState}`);
+  currentReportedState = state;
+  console.log(`[Hardware Update] บอร์ดแจ้งสถานะเป็น: ${currentReportedState}`);
 
-  const now = Date.now();
-  
-  // 🛡️ ระบบส่งแจ้งเตือนเข้าไลน์อัตโนมัติ (ใช้ Push Message ที่มีโควตา 500 ข้อความ)
-  if (motorState !== lastNotifiedState && targetUserId && (now - lastNotificationTime > 3000)) {
-    lastNotifiedState = motorState; 
-    lastNotificationTime = now; 
+  // ⚡ ระบบดักจับการเปลี่ยนแปลงสถานะเพื่อส่ง Push Notification
+  // จะส่งหา LINE ก็ต่อเมื่อ: 1. มี ID ผู้ใช้แล้ว 2. สถานะเปลี่ยนไปจากเดิมจริง ๆ เท่านั้น
+  if (targetUserId && currentReportedState !== lastNotifiedState) {
+    lastNotifiedState = currentReportedState; // ล็อกสถานะทันที กันส่งซ้ำ
 
-    let alertText = "";
-    if (motorState === "RUNNING") alertText = "🟢 มอเตอร์เริ่มทำงานแล้ว (RUNNING)";
-    if (motorState === "STANDBY") alertText = "🟡 มอเตอร์หยุดทำงาน/สแตนบาย (STANDBY)";
-    if (motorState === "FAULT") alertText = "🚨 ตู้ควบคุมเกิดเหตุขัดข้อง! ระบบติดสถานะ FAULT";
+    let msgText = "";
+    if (currentReportedState === "RUNNING") msgText = "🟢 [มอเตอร์ทำงาน] ตู้ควบคุมเปิดการทำงานมอเตอร์เรียบร้อยแล้ว";
+    if (currentReportedState === "STANDBY") msgText = "🟡 [มอเตอร์หยุด] ตู้ควบคุมหยุดทำงานและสแตนบายรอสั่งงาน";
+    if (currentReportedState === "FAULT")   msgText = "🚨 [แจ้งเตือนอันตราย] ตู้ควบคุมเกิดเหตุขัดข้อง ระบบติดสถานะ FAULT!";
 
-    client.pushMessage(targetUserId, { type: 'text', text: alertText })
-      .then(() => console.log(`[LINE Push Success]: ${motorState}`))
-      .catch((err) => {
-        // 💡 ถ้าโควตาข้อความหมด หรือเกิด Error ตัวหนังสือจะฟ้องตรงนี้ใน Render Logs ครับ
-        console.error('❌ [LINE Push Failed] อาจเกิดจากโควตาข้อความฟรี 500 ข้อความหมดลงแล้ว:', err.message);
-      });
+    // ยิงข้อความแจ้งเตือนทันทีด้วย Push Message
+    client.pushMessage(targetUserId, { type: 'text', text: msgText })
+      .then(() => console.log(`[Push Sent Success] แจ้งเตือนสถานะ: ${currentReportedState}`))
+      .catch((err) => console.error('[Push Sent Error]', err));
   }
 
-  res.json({ status: "success", serverState: motorState });
+  res.json({ status: "success", receivedState: state });
 });
 
-// 📌 ระบบโต้ตอบในไลน์ (ใช้ Reply Message - ฟรี 100% ไม่มีวันหมดโควตา)
+// 📌 [POST] Webhook รับคำสั่งพิมพ์จากแอป LINE
 app.post('/webhook', (req, res) => {
   const events = req.body.events;
   
   events.forEach((event) => {
     if (event.type === 'message' && event.message.type === 'text') {
-      targetUserId = event.source.userId; 
+      targetUserId = event.source.userId; // บันทึก ID ผู้ใช้ไว้ส่งแจ้งเตือนกลับ
       const userText = event.message.text.trim();
       let replyText = "";
 
       if (userText === "เปิด") {
-        if (motorState === "FAULT") {
-          replyText = "❌ ไม่สามารถเปิดได้! เนื่องจากระบบที่ตู้ควบคุมติดสถานะ FAULT อยู่";
+        if (currentReportedState === "FAULT") {
+          replyText = "❌ ไม่สามารถเปิดมอเตอร์ได้! เนื่องจากตู้ควบคุมติดสถานะ FAULT อยู่ครับ";
         } else {
           targetCommand = "ON";
-          // 💡 ปรับปรุงข้อความตอบกลับให้ชัดเจนและแนะนำวิธีเช็คสถานะแบบฟรีๆ
-          replyText = "⏳ ส่งคำสั่ง [เปิดมอเตอร์] ไปยังตู้ควบคุมแล้วครับ!\n\n*(เนื่องจากระบบจำกัดข้อความแจ้งเตือนอัตโนมัติ หากไฟเขียวที่ตู้ติดแล้วไลน์ไม่เด้งบอก คุณสามารถพิมพ์คำว่า 'เช็คสถานะ' เพื่ออัปเดตระบบได้ฟรีตลอดเวลาครับ)*";
+          replyText = "📥 รับคำสั่ง [เปิดมอเตอร์] กำลังส่งสัญญาณไปยังบอร์ด...";
         }
       } 
       else if (userText === "ปิด") {
         targetCommand = "OFF";
-        replyText = "⏳ ส่งคำสั่ง [ปิดมอเตอร์] ไปยังตู้ควบคุมแล้วครับ!\n\n*(คุณสามารถพิมพ์คำว่า 'เช็คสถานะ' เพื่อดูการหยุดทำงานจริงของตู้ได้ฟรีตลอดเวลาครับ)*";
+        replyText = "📥 รับคำสั่ง [ปิดมอเตอร์] กำลังส่งสัญญาณไปยังบอร์ด...";
       } 
       else if (userText === "เช็คสถานะ") {
-        let stateEmoji = motorState === "RUNNING" ? "🟢" : (motorState === "FAULT" ? "🚨" : "🟡");
-        replyText = `📊 [อัปเดตสถานะตู้ควบคุมจริง]\n• สถานะฮาร์ดแวร์: ${stateEmoji} ${motorState}\n• คำสั่งสวิตช์ล่าสุด: ${targetCommand}`;
+        let stateEmoji = currentReportedState === "RUNNING" ? "🟢 RUNNING" : (currentReportedState === "FAULT" ? "🚨 FAULT" : "🟡 STANDBY");
+        replyText = `📊 รายงานสถานะปัจจุบัน:\n• สถานะตู้ควบคุม: ${stateEmoji}\n• คำสั่งสวิตช์ล่าสุด: ${targetCommand}`;
       } 
       else {
-        replyText = "🤖 คำสั่งตู้ควบคุมมอเตอร์:\n• พิมพ์ 'เปิด' เพื่อรันมอเตอร์\n• พิมพ์ 'ปิด' เพื่อหยุดมอเตอร์\n• พิมพ์ 'เช็คสถานะ' เพื่อดูระบบ";
+        replyText = "🤖 ยินดีต้อนรับสู่ระบบควบคุมมอเตอร์\n• พิมพ์ 'เปิด' : เพื่อสั่งรันมอเตอร์\n• พิมพ์ 'ปิด' : เพื่อหยุดทำงาน\n• พิมพ์ 'เช็คสถานะ' : เพื่อดูระบบ";
       }
 
       client.replyMessage(event.replyToken, { type: 'text', text: replyText })
-        .catch((err) => console.error('[LINE Reply Error]', err));
+        .catch((err) => console.error('[Reply Error]', err));
     }
   });
 
@@ -95,6 +93,4 @@ app.post('/webhook', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server Running`);
-});
+app.listen(PORT, () => console.log(`🚀 Server Running on port ${PORT}`));
