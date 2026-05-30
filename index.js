@@ -1,214 +1,76 @@
-const express = require("express");
-const axios = require("axios");
+const express = require('express');
+const { Client } = require('@line/bot-sdk');
 
 const app = express();
 app.use(express.json());
 
-// ===============================
-// 🔑 LINE TOKEN
-// ===============================
-const TOKEN = process.env.CHANNEL_ACCESS_TOKEN;
-const USER_ID = process.env.USER_ID;
-
-// ===============================
-// ⚙️ SYSTEM STATE
-// ===============================
-let command = "NONE";
-
-let systemStatus = {
-  motor: "STOP",
-  fault: "NORMAL",
-  online: false,
-  lastHeartbeat: 0   // 🔥 ใช้ heartbeat จริง
+const config = {
+  channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.CHANNEL_SECRET,
 };
+const client = new Client(config);
 
-// ===============================
-// ⏱️ UPDATE HEARTBEAT
-// ===============================
-function updateHeartbeat() {
-  systemStatus.lastHeartbeat = Date.now();
-}
+// ตัวแปรเก็บสถานะในหน่วยความจำ (Global Variables)
+let motorCommand = "OFF";     // คำสั่งจาก LINE: ON หรือ OFF
+let lastReportedState = "STANDBY"; // สถานะจริงจาก ESP32: STANDBY, RUNNING, FAULT
+let targetUserId = null;     // เก็บ ID ไลน์ของผู้ใช้เพื่อใช้ส่งแจ้งเตือนกลับ
 
-// ===============================
-// 📢 LINE PUSH MESSAGE
-// ===============================
-async function sendLine(text) {
+// 1. Endpoint สำหรับให้ ESP32 มาดึงคำสั่ง (Polling)
+app.get('/api/motor/command', (req, res) => {
+  res.json({ command: motorCommand });
+});
 
-  try {
-
-    await axios.post(
-      "https://api.line.me/v2/bot/message/push",
-      {
-        to: USER_ID,
-        messages: [{ type: "text", text }]
-      },
-      {
-        headers: {
-          "Authorization": `Bearer ${TOKEN}`
-        }
+// 2. Endpoint สำหรับให้ ESP32 รายงานสถานะจริงกลับมา
+app.post('/api/motor/report', (req, res) => {
+  const { state } = req.body;
+  console.log(`ESP32 Reported: ${state}`);
+  
+  if (state !== lastReportedState) {
+    lastReportedState = state;
+    
+    // ส่งข้อความแจ้งเตือนเข้า LINE เมื่อสถานะเปลี่ยน
+    if (targetUserId) {
+      let messageText = "";
+      if (state === "FAULT") {
+        messageText = "🚨 [แจ้งเตือน] ตู้ควบคุมตรวจพบสถานะ Fault! ระบบตัดการทำงานของมอเตอร์ทันที กรุณาตรวจสอบ";
+      } else if (state === "RUNNING") {
+        messageText = "🟢 [สถานะ] มอเตอร์เปิดใช้งานและกำลังทำงาน...";
+      } else if (state === "STANDBY") {
+        messageText = "🟡 [สถานะ] มอเตอร์หยุดการทำงาน (Standby)";
       }
-    );
-
-  } catch (err) {
-    console.log("LINE ERROR:", err.message);
+      
+      client.pushMessage(targetUserId, { type: 'text', text: messageText })
+        .catch(err => console.error("LINE Push Error:", err));
+    }
   }
-
-}
-
-// ===============================
-// 📩 LINE REPLY
-// ===============================
-async function replyMessage(replyToken, text) {
-
-  try {
-
-    await axios.post(
-      "https://api.line.me/v2/bot/message/reply",
-      {
-        replyToken,
-        messages: [{ type: "text", text }]
-      },
-      {
-        headers: {
-          "Authorization": `Bearer ${TOKEN}`
-        }
-      }
-    );
-
-  } catch (err) {
-    console.log("REPLY ERROR:", err.message);
-  }
-
-}
-
-// ===============================
-// 🟢 WEBHOOK LINE
-// ===============================
-app.post("/webhook", (req, res) => {
-
   res.sendStatus(200);
+});
 
+// 3. Webhook สำหรับรับข้อความจาก LINE Bot
+app.post('/webhook', (req, res) => {
   const events = req.body.events;
-  if (!events || events.length === 0) return;
-
-  const event = events[0];
-  if (event.type !== "message") return;
-
-  const text = event.message.text.trim();
-  const replyToken = event.replyToken;
-
-  setTimeout(async () => {
-
-    if (text === "เปิด") {
-
-      command = "START";
-      systemStatus.motor = "RUN";
-
-      await replyMessage(replyToken, "🟢 เปิดระบบแล้ว");
-
+  
+  events.forEach(event => {
+    if (event.type === 'message' && event.message.type === 'text') {
+      const text = event.message.text.trim();
+      targetUserId = event.source.userId; // บันทึก ID ผู้ใช้ไว้ส่งการแจ้งเตือน
+      
+      if (text === "เปิด") {
+        motorCommand = "ON";
+        client.replyMessage(event.replyToken, { type: 'text', text: '📥 รับคำสั่ง: กำลังส่งสัญญาณเปิดมอเตอร์...' });
+      } else if (text === "ปิด") {
+        motorCommand = "OFF";
+        client.replyMessage(event.replyToken, { type: 'text', text: '📥 รับคำสั่ง: กำลังส่งสัญญาณปิดมอเตอร์...' });
+      } else {
+        client.replyMessage(event.replyToken, { 
+          type: 'text', 
+          text: '🤖 ยินดีต้อนรับสู่ตู้ควบคุมมอเตอร์อัจฉริยะ\n\nพิมพ์ "เปิด" หรือ "ปิด" เพื่อควบคุมระบบ' 
+        });
+      }
     }
-
-    else if (text === "ปิด") {
-
-      command = "STOP";
-      systemStatus.motor = "STOP";
-
-      await replyMessage(replyToken, "🔴 ปิดระบบแล้ว");
-
-      // เคลียร์คำสั่ง
-      setTimeout(() => command = "NONE", 2000);
-
-    }
-
-    else if (text === "reset") {
-
-      command = "RESET";
-      systemStatus.motor = "STOP";
-      systemStatus.fault = "NORMAL";
-
-      await replyMessage(replyToken, "♻️ รีเซ็ตระบบแล้ว");
-
-    }
-
-    else if (text === "สถานะ") {
-
-      await replyMessage(
-        replyToken,
-`📊 สถานะระบบ
-Motor: ${systemStatus.motor}
-Fault: ${systemStatus.fault}
-Online: ${systemStatus.online ? "YES" : "NO"}`
-      );
-
-    }
-
-    else {
-
-      await replyMessage(replyToken, "คำสั่ง: เปิด / ปิด / reset / สถานะ");
-
-    }
-
-  }, 300);
-
+  });
+  res.sendStatus(200);
 });
 
-// ===============================
-// 🤖 ESP32 UPDATE (HEARTBEAT)
-// ===============================
-app.post("/updateStatus", (req, res) => {
-
-  systemStatus.motor = req.body.motor || systemStatus.motor;
-  systemStatus.fault = req.body.fault || systemStatus.fault;
-
-  systemStatus.online = true;
-  updateHeartbeat();
-
-  console.log("💓 HEARTBEAT:", systemStatus);
-
-  res.json({ ok: true });
-
-});
-
-// ===============================
-// 📡 GET COMMAND
-// ===============================
-app.get("/command", (req, res) => {
-  res.json({ command });
-});
-
-// ===============================
-// 🧹 CLEAR COMMAND
-// ===============================
-app.get("/clear", (req, res) => {
-  command = "NONE";
-  res.json({ ok: true });
-});
-
-// ===============================
-// 🔴 OFFLINE DETECTION (FIXED)
-// ===============================
-setInterval(() => {
-
-  const now = Date.now();
-  const diff = now - systemStatus.lastHeartbeat;
-
-  if (systemStatus.lastHeartbeat !== 0 && diff > 15000 && systemStatus.online) {
-
-    systemStatus.online = false;
-
-    console.log("🔴 OFFLINE DETECTED");
-
-    sendLine("🔴 ระบบ OFFLINE (ESP32 ไม่ส่ง Heartbeat)");
-
-  }
-
-}, 5000);
-
-// ===============================
-// 🚀 START SERVER
-// ===============================
 const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log("🟢 SERVER ONLINE");
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
