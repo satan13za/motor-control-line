@@ -7,27 +7,31 @@ app.use(express.json());
 
 const TOKEN = process.env.CHANNEL_ACCESS_TOKEN;
 
-// =======================
-// SYSTEM STATUS
-// =======================
+// ======================================
+// SYSTEM VARIABLES
+// ======================================
 
-let motorStatus = "STOP";
-let faultStatus = "NORMAL";
-let systemOnline = true;
+let command = "NONE";
 
-let lastUpdate = new Date().toLocaleString("th-TH");
+let systemStatus = {
+  motor: "STOP",
+  fault: "NORMAL",
+  online: false,
+  update: "-"
+};
 
-// =======================
+// ======================================
 // UPDATE TIME
-// =======================
+// ======================================
 
 function updateTime() {
-  lastUpdate = new Date().toLocaleString("th-TH");
+  systemStatus.update =
+    new Date().toLocaleString("th-TH");
 }
 
-// =======================
-// REPLY LINE
-// =======================
+// ======================================
+// LINE REPLY
+// ======================================
 
 async function replyMessage(replyToken, text) {
 
@@ -49,11 +53,12 @@ async function replyMessage(replyToken, text) {
       }
     }
   );
+
 }
 
-// =======================
+// ======================================
 // HOME
-// =======================
+// ======================================
 
 app.get("/", (req, res) => {
 
@@ -61,101 +66,84 @@ app.get("/", (req, res) => {
 
 });
 
-// =======================
-// STATUS API
-// =======================
+// ======================================
+// ESP32 GET COMMAND
+// ======================================
+
+app.get("/command", (req, res) => {
+
+  res.json({
+    command: command
+  });
+
+});
+
+// ======================================
+// CLEAR COMMAND
+// ======================================
+
+app.get("/clear", (req, res) => {
+
+  command = "NONE";
+
+  res.json({
+    result: "OK"
+  });
+
+});
+
+// ======================================
+// ESP32 UPDATE STATUS
+// ======================================
+
+app.post("/updateStatus", (req, res) => {
+
+  try {
+
+    systemStatus.motor =
+      req.body.motor || systemStatus.motor;
+
+    systemStatus.fault =
+      req.body.fault || systemStatus.fault;
+
+    systemStatus.online = true;
+
+    updateTime();
+
+    console.log("STATUS UPDATE");
+
+    console.log(systemStatus);
+
+    res.json({
+      result: "OK"
+    });
+
+  }
+  catch (err) {
+
+    console.error(err);
+
+    res.status(500).json({
+      error: err.message
+    });
+
+  }
+
+});
+
+// ======================================
+// GET STATUS
+// ======================================
 
 app.get("/status", (req, res) => {
 
-  res.json({
-    motor: motorStatus,
-    fault: faultStatus,
-    online: systemOnline,
-    update: lastUpdate
-  });
+  res.json(systemStatus);
 
 });
 
-// =======================
-// START API
-// =======================
-
-app.get("/start", (req, res) => {
-
-  motorStatus = "RUN";
-  faultStatus = "NORMAL";
-
-  updateTime();
-
-  console.log("START MOTOR");
-
-  res.json({
-    result: "RUN"
-  });
-
-});
-
-// =======================
-// STOP API
-// =======================
-
-app.get("/stop", (req, res) => {
-
-  motorStatus = "STOP";
-
-  updateTime();
-
-  console.log("STOP MOTOR");
-
-  res.json({
-    result: "STOP"
-  });
-
-});
-
-// =======================
-// FAULT API
-// =======================
-
-app.get("/fault", (req, res) => {
-
-  motorStatus = "FAULT";
-
-  faultStatus = "ACTIVE";
-
-  updateTime();
-
-  console.log("FAULT");
-
-  res.json({
-    result: "FAULT"
-  });
-
-});
-
-// =======================
-// RESET API
-// =======================
-
-app.get("/reset", (req, res) => {
-
-  motorStatus = "STOP";
-
-  faultStatus = "NORMAL";
-
-  updateTime();
-
-  console.log("RESET");
-
-  res.json({
-    result: "RESET"
-  });
-
-});
-
-// =======================
+// ======================================
 // WEBHOOK
-// =======================
+// ======================================
 
 app.post("/webhook", async (req, res) => {
 
@@ -173,93 +161,83 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    const text = event.message.text.trim();
+    const text =
+      event.message.text.trim();
 
-    const replyToken = event.replyToken;
+    const replyToken =
+      event.replyToken;
 
     console.log("MESSAGE:", text);
 
-    // ==================
-    // เปิด
-    // ==================
+    // ==========================
+    // START
+    // ==========================
 
     if (text === "เปิด") {
 
-      motorStatus = "RUN";
-      faultStatus = "NORMAL";
-
-      updateTime();
+      command = "START";
 
       await replyMessage(
         replyToken,
-        "🟢 มอเตอร์กำลังทำงาน"
+        "🟢 ส่งคำสั่งเปิดมอเตอร์แล้ว"
       );
 
     }
 
-    // ==================
-    // ปิด
-    // ==================
+    // ==========================
+    // STOP
+    // ==========================
 
     else if (text === "ปิด") {
 
-      motorStatus = "STOP";
-
-      updateTime();
+      command = "STOP";
 
       await replyMessage(
         replyToken,
-        "🔴 มอเตอร์หยุดทำงาน"
+        "🔴 ส่งคำสั่งหยุดมอเตอร์แล้ว"
       );
 
     }
 
-    // ==================
-    // TEST FAULT
-    // ==================
+    // ==========================
+    // FAULT
+    // ==========================
 
     else if (
       text === "fault" ||
-      text === "FAULT" ||
-      text === "test"
+      text === "FAULT"
     ) {
 
-      motorStatus = "FAULT";
-      faultStatus = "ACTIVE";
-
-      updateTime();
+      command = "FAULT";
 
       await replyMessage(
         replyToken,
-        "⚠️ Motor Fault Detected ระบบมีปัญหา"
+        "⚠️ ทดสอบ Fault แล้ว"
       );
 
     }
 
-    // ==================
+    // ==========================
     // RESET
-    // ==================
+    // ==========================
 
     else if (
       text === "reset" ||
       text === "RESET"
     ) {
 
-      motorStatus = "STOP";
-      faultStatus = "NORMAL";
-
-      updateTime();
+      command = "RESET";
 
       await replyMessage(
         replyToken,
-        "✅ System Reset Complete"
+        "✅ ส่งคำสั่ง Reset แล้ว"
       );
 
     }
 
-    // ==================
+    // ==========================
     // STATUS
-    // ==================
+    // ==========================
 
     else if (
       text === "สถานะ" ||
@@ -267,15 +245,17 @@ app.post("/webhook", async (req, res) => {
     ) {
 
       let msg =
+
 `📋 สถานะระบบ
 
-Motor : ${motorStatus}
+Motor : ${systemStatus.motor}
 
-Fault : ${faultStatus}
+Fault : ${systemStatus.fault}
 
-Online : ${systemOnline ? "YES" : "NO"}
+Online : ${systemStatus.online ? "YES" : "NO"}
 
-Update : ${lastUpdate}`;
+Update :
+${systemStatus.update}`;
 
       await replyMessage(
         replyToken,
@@ -284,14 +264,15 @@ Update : ${lastUpdate}`;
 
     }
 
-    // ==================
+    // ==========================
     // HELP
-    // ==================
+    // ==========================
 
     else {
 
       await replyMessage(
         replyToken,
+
 `คำสั่งที่ใช้งานได้
 
 เปิด
@@ -299,6 +280,7 @@ Update : ${lastUpdate}`;
 สถานะ
 fault
 reset`
+
       );
 
     }
@@ -316,16 +298,64 @@ reset`
 
 });
 
-// =======================
-// SERVER
-// =======================
+// ======================================
+// OFFLINE CHECK
+// ======================================
 
-const PORT = process.env.PORT || 3000;
+setInterval(() => {
+
+  try {
+
+    if (
+      systemStatus.update !== "-"
+    ) {
+
+      const last =
+        new Date(
+          systemStatus.update
+        ).getTime();
+
+      const now =
+        new Date().getTime();
+
+      if (
+        now - last > 60000
+      ) {
+
+        systemStatus.online = false;
+
+      }
+
+    }
+
+  }
+  catch (err) {
+
+    console.error(err);
+
+  }
+
+}, 10000);
+
+// ======================================
+// START SERVER
+// ======================================
+
+const PORT =
+  process.env.PORT || 3000;
 
 app.listen(PORT, () => {
 
-  console.log("================================");
-  console.log("Motor Control Server Running");
-  console.log("================================");
+  console.log(
+    "================================"
+  );
+
+  console.log(
+    "Motor Control Server Running"
+  );
+
+  console.log(
+    "================================"
+  );
 
 });
