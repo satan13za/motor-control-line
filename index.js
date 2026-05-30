@@ -231,7 +231,7 @@ app.post("/webhook", async (req, res) => {
 
       await replyMessage(
         replyToken,
-        "⚠️ Motor Fault Detected"
+        "⚠️ Motor Fault Detected ระบบมีปัญหา"
       );
 
     }
@@ -273,7 +273,7 @@ Motor : ${motorStatus}
 
 Fault : ${faultStatus}
 
-Online : ${systemOnline ? "YES" : "NO"}
+Online : ${systemOnline ? "🟢YES" : "🔴NO"}
 
 Update : ${lastUpdate}`;
 
