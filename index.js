@@ -273,7 +273,7 @@ Motor : ${motorStatus}
 
 Fault : ${faultStatus}
 
-Online : ${systemOnline ? "🟢YES" : "🔴NO"}
+Online : ${systemOnline ? "YES" : "NO"}
 
 Update : ${lastUpdate}`;
 
