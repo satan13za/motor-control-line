@@ -8,9 +8,10 @@ app.use(express.json());
 // 🔑 LINE TOKEN
 // ===============================
 const TOKEN = process.env.CHANNEL_ACCESS_TOKEN;
+const USER_ID = process.env.USER_ID;
 
 // ===============================
-// 📡 SYSTEM STATE
+// ⚙️ SYSTEM STATE
 // ===============================
 let command = "NONE";
 
@@ -18,18 +19,18 @@ let systemStatus = {
   motor: "STOP",
   fault: "NORMAL",
   online: false,
-  lastUpdate: null
+  lastUpdate: Date.now()
 };
 
 // ===============================
-// ⏰ อัปเดตเวลา
+// ⏱️ UPDATE TIME
 // ===============================
 function updateTime() {
   systemStatus.lastUpdate = Date.now();
 }
 
 // ===============================
-// 📢 ส่งข้อความ LINE
+// 📢 SEND LINE (PUSH ALERT)
 // ===============================
 async function sendLine(text) {
 
@@ -38,23 +39,18 @@ async function sendLine(text) {
     await axios.post(
       "https://api.line.me/v2/bot/message/push",
       {
-        to: process.env.USER_ID, // 🔥 ใส่ LINE USER ID ของคุณ
-        messages: [
-          {
-            type: "text",
-            text
-          }
-        ]
+        to: USER_ID,
+        messages: [{ type: "text", text }]
       },
       {
         headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${TOKEN}`
+          "Authorization": `Bearer ${TOKEN}`,
+          "Content-Type": "application/json"
         }
       }
     );
 
-    console.log("📩 LINE SENT:", text);
+    console.log("📩 LINE:", text);
 
   } catch (err) {
     console.log("❌ LINE ERROR:", err.message);
@@ -63,7 +59,7 @@ async function sendLine(text) {
 }
 
 // ===============================
-// 📢 REPLY (ใช้ตอนกดใน LINE)
+// 📩 REPLY LINE
 // ===============================
 async function replyMessage(replyToken, text) {
 
@@ -89,11 +85,11 @@ async function replyMessage(replyToken, text) {
 }
 
 // ===============================
-// 🟢 WEBHOOK LINE
+// 🟢 WEBHOOK
 // ===============================
 app.post("/webhook", (req, res) => {
 
-  res.sendStatus(200); // 🔥 ต้องมาก่อน
+  res.sendStatus(200);
 
   const events = req.body.events;
   if (!events || events.length === 0) return;
@@ -104,8 +100,6 @@ app.post("/webhook", (req, res) => {
   const text = event.message.text.trim();
   const replyToken = event.replyToken;
 
-  console.log("📩 LINE:", text);
-
   setTimeout(async () => {
 
     if (text === "เปิด") {
@@ -115,7 +109,7 @@ app.post("/webhook", (req, res) => {
       systemStatus.online = true;
       updateTime();
 
-      await replyMessage(replyToken, "🟢 เปิดมอเตอร์แล้ว");
+      await replyMessage(replyToken, "🟢 เปิดระบบแล้ว");
 
     }
 
@@ -125,7 +119,24 @@ app.post("/webhook", (req, res) => {
       systemStatus.motor = "STOP";
       updateTime();
 
-      await replyMessage(replyToken, "🔴 ปิดมอเตอร์แล้ว");
+      await replyMessage(replyToken, "🔴 ปิดระบบแล้ว");
+
+      // 🔥 RESET หลังปิด (เพิ่มใหม่)
+      setTimeout(() => {
+        command = "NONE";
+      }, 3000);
+
+    }
+
+    else if (text === "reset") {
+
+      command = "RESET";
+      systemStatus.motor = "STOP";
+      systemStatus.fault = "NORMAL";
+      systemStatus.online = false;
+      updateTime();
+
+      await replyMessage(replyToken, "♻️ รีเซ็ตระบบแล้ว");
 
     }
 
@@ -134,8 +145,7 @@ app.post("/webhook", (req, res) => {
       await replyMessage(
         replyToken,
 `📊 สถานะระบบ
-
-มอเตอร์: ${systemStatus.motor}
+Motor: ${systemStatus.motor}
 Fault: ${systemStatus.fault}
 Online: ${systemStatus.online ? "YES" : "NO"}`
       );
@@ -144,7 +154,7 @@ Online: ${systemStatus.online ? "YES" : "NO"}`
 
     else {
 
-      await replyMessage(replyToken, "คำสั่ง: เปิด / ปิด / สถานะ");
+      await replyMessage(replyToken, "คำสั่ง: เปิด / ปิด / reset / สถานะ");
 
     }
 
@@ -153,31 +163,31 @@ Online: ${systemStatus.online ? "YES" : "NO"}`
 });
 
 // ===============================
-// 🤖 ESP32 SIMULATOR UPDATE
+// 🤖 ESP32 UPDATE STATUS
 // ===============================
 app.post("/updateStatus", (req, res) => {
 
-  systemStatus.motor = req.body.motor;
-  systemStatus.fault = req.body.fault;
-
+  systemStatus.motor = req.body.motor || systemStatus.motor;
+  systemStatus.fault = req.body.fault || systemStatus.fault;
   systemStatus.online = true;
+
   updateTime();
 
-  console.log("🤖 ESP32 UPDATE:", systemStatus);
+  console.log("🤖 UPDATE:", systemStatus);
 
   res.json({ ok: true });
 
 });
 
 // ===============================
-// 📡 ESP32 ดึงคำสั่ง
+// 📡 COMMAND
 // ===============================
 app.get("/command", (req, res) => {
   res.json({ command });
 });
 
 // ===============================
-// 🧹 ล้างคำสั่ง
+// 🧹 CLEAR COMMAND
 // ===============================
 app.get("/clear", (req, res) => {
   command = "NONE";
@@ -185,30 +195,36 @@ app.get("/clear", (req, res) => {
 });
 
 // ===============================
-// 🔴 OFFLINE DETECTION SYSTEM
+// 🔴 OFFLINE + AUTO RESET SYSTEM (FIXED)
 // ===============================
 setInterval(() => {
 
   const now = Date.now();
+  const diff = now - systemStatus.lastUpdate;
 
-  if (systemStatus.lastUpdate) {
+  // 🔴 OFFLINE DETECT
+  if (diff > 30000 && systemStatus.online) {
 
-    const diff = now - systemStatus.lastUpdate;
+    systemStatus.online = false;
 
-    if (diff > 60000 && systemStatus.online) {
+    console.log("🔴 SYSTEM OFFLINE");
 
-      systemStatus.online = false;
-
-      console.log("🔴 SYSTEM OFFLINE");
-
-      // 📢 แจ้ง LINE ทันที
-      sendLine("🔴 ระบบ OFFLINE: ไม่มีการเชื่อมต่อ ESP32");
-
-    }
+    sendLine("🔴 แจ้งเตือน: ระบบ OFFLINE (ESP32 ไม่ตอบสนอง)");
 
   }
 
-}, 10000);
+  // 🔥 AUTO RESET ถ้าค้างนาน
+  if (diff > 120000) {
+
+    command = "RESET";
+    systemStatus.motor = "STOP";
+    systemStatus.fault = "NORMAL";
+
+    console.log("♻️ AUTO RESET SYSTEM");
+
+  }
+
+}, 5000);
 
 // ===============================
 // 🚀 START SERVER
@@ -216,7 +232,5 @@ setInterval(() => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log("================================");
-  console.log("🟢 Motor Control Server ONLINE");
-  console.log("================================");
+  console.log("🟢 SYSTEM ONLINE");
 });
