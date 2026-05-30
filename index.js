@@ -2,15 +2,16 @@ const express = require("express");
 const axios = require("axios");
 
 const app = express();
-
 app.use(express.json());
 
+// ===============================
+// LINE TOKEN (Render ENV)
+// ===============================
 const TOKEN = process.env.CHANNEL_ACCESS_TOKEN;
 
-// ======================================
+// ===============================
 // SYSTEM VARIABLES
-// ======================================
-
+// ===============================
 let command = "NONE";
 
 let systemStatus = {
@@ -20,342 +21,242 @@ let systemStatus = {
   update: "-"
 };
 
-// ======================================
+// ===============================
 // UPDATE TIME
-// ======================================
-
+// ===============================
 function updateTime() {
-  systemStatus.update =
-    new Date().toLocaleString("th-TH");
+  systemStatus.update = new Date().toLocaleString("th-TH");
 }
 
-// ======================================
-// LINE REPLY
-// ======================================
-
+// ===============================
+// LINE REPLY FUNCTION
+// ===============================
 async function replyMessage(replyToken, text) {
 
-  await axios.post(
-    "https://api.line.me/v2/bot/message/reply",
-    {
-      replyToken,
-      messages: [
-        {
-          type: "text",
-          text
+  try {
+
+    await axios.post(
+      "https://api.line.me/v2/bot/message/reply",
+      {
+        replyToken,
+        messages: [
+          {
+            type: "text",
+            text
+          }
+        ]
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${TOKEN}`
         }
-      ]
-    },
-    {
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${TOKEN}`
       }
-    }
-  );
+    );
+
+    console.log("✅ Reply success");
+
+  } catch (err) {
+
+    console.log("❌ Reply error:");
+    console.log(err.response?.data || err.message);
+
+  }
 
 }
 
-// ======================================
-// HOME
-// ======================================
-
+// ===============================
+// HOME TEST
+// ===============================
 app.get("/", (req, res) => {
-
   res.send("Motor Control Server Online");
-
 });
 
-// ======================================
-// ESP32 GET COMMAND
-// ======================================
+// ===============================
+// WEBHOOK (IMPORTANT FIX)
+// ===============================
+app.post("/webhook", (req, res) => {
 
-app.get("/command", (req, res) => {
+  // 🔴 ต้องตอบทันที ห้ามรอ
+  res.sendStatus(200);
 
-  res.json({
-    command: command
-  });
+  const events = req.body.events;
 
-});
+  if (!events || events.length === 0) return;
 
-// ======================================
-// CLEAR COMMAND
-// ======================================
+  const event = events[0];
 
-app.get("/clear", (req, res) => {
+  if (event.type !== "message") return;
 
-  command = "NONE";
+  const text = event.message.text.trim();
+  const replyToken = event.replyToken;
 
-  res.json({
-    result: "OK"
-  });
+  console.log("📩 MESSAGE:", text);
 
-});
+  // ===============================
+  // ทำงานแบบ async หลังตอบ 200 แล้ว
+  // ===============================
+  setTimeout(async () => {
 
-// ======================================
-// ESP32 UPDATE STATUS
-// ======================================
-
-app.post("/updateStatus", (req, res) => {
-
-  try {
-
-    systemStatus.motor =
-      req.body.motor || systemStatus.motor;
-
-    systemStatus.fault =
-      req.body.fault || systemStatus.fault;
-
-    systemStatus.online = true;
-
-    updateTime();
-
-    console.log("STATUS UPDATE");
-
-    console.log(systemStatus);
-
-    res.json({
-      result: "OK"
-    });
-
-  }
-  catch (err) {
-
-    console.error(err);
-
-    res.status(500).json({
-      error: err.message
-    });
-
-  }
-
-});
-
-// ======================================
-// GET STATUS
-// ======================================
-
-app.get("/status", (req, res) => {
-
-  res.json(systemStatus);
-
-});
-
-// ======================================
-// WEBHOOK
-// ======================================
-
-app.post("/webhook", async (req, res) => {
-
-  try {
-
-    const events = req.body.events;
-
-    if (!events || events.length === 0) {
-      return res.sendStatus(200);
-    }
-
-    const event = events[0];
-
-    if (event.type !== "message") {
-      return res.sendStatus(200);
-    }
-
-    const text =
-      event.message.text.trim();
-
-    const replyToken =
-      event.replyToken;
-
-    console.log("MESSAGE:", text);
-
-    // ==========================
-    // START
-    // ==========================
-
+    // 🔵 OPEN
     if (text === "เปิด") {
 
       command = "START";
+      systemStatus.motor = "RUN";
+      systemStatus.online = true;
+      updateTime();
 
-      await replyMessage(
-        replyToken,
-        "🟢 ส่งคำสั่งเปิดมอเตอร์แล้ว"
-      );
+      await replyMessage(replyToken, "🟢 เปิดมอเตอร์แล้ว");
 
     }
 
-    // ==========================
-    // STOP
-    // ==========================
-
+    // 🔴 STOP
     else if (text === "ปิด") {
 
       command = "STOP";
+      systemStatus.motor = "STOP";
+      updateTime();
 
-      await replyMessage(
-        replyToken,
-        "🔴 ส่งคำสั่งหยุดมอเตอร์แล้ว"
-      );
+      await replyMessage(replyToken, "🔴 ปิดมอเตอร์แล้ว");
 
     }
 
-    // ==========================
-    // FAULT
-    // ==========================
-
-    else if (
-      text === "fault" ||
-      text === "FAULT"
-    ) {
+    // ⚠️ FAULT
+    else if (text === "fault") {
 
       command = "FAULT";
+      systemStatus.fault = "ACTIVE";
+      updateTime();
 
-      await replyMessage(
-        replyToken,
-        "⚠️ ทดสอบ Fault แล้ว"
-      );
+      await replyMessage(replyToken, "⚠️ จำลอง Fault แล้ว");
 
     }
 
-    // ==========================
-    // RESET
-    // ==========================
-
-    else if (
-      text === "reset" ||
-      text === "RESET"
-    ) {
+    // 🔄 RESET
+    else if (text === "reset") {
 
       command = "RESET";
+      systemStatus.fault = "NORMAL";
+      systemStatus.motor = "STOP";
+      updateTime();
 
-      await replyMessage(
-        replyToken,
-        "✅ ส่งคำสั่ง Reset แล้ว"
-      );
+      await replyMessage(replyToken, "✅ Reset ระบบแล้ว");
 
     }
 
-    // ==========================
-    // STATUS
-    // ==========================
+    // 📊 STATUS
+    else if (text === "สถานะ") {
 
-    else if (
-      text === "สถานะ" ||
-      text === "status"
-    ) {
-
-      let msg =
-
-`📋 สถานะระบบ
+      await replyMessage(
+        replyToken,
+`📊 สถานะระบบ
 
 Motor : ${systemStatus.motor}
-
 Fault : ${systemStatus.fault}
-
 Online : ${systemStatus.online ? "YES" : "NO"}
-
-Update :
-${systemStatus.update}`;
-
-      await replyMessage(
-        replyToken,
-        msg
+Update : ${systemStatus.update}`
       );
 
     }
 
-    // ==========================
-    // HELP
-    // ==========================
-
+    // ❓ DEFAULT
     else {
 
       await replyMessage(
         replyToken,
-
-`คำสั่งที่ใช้งานได้
-
-เปิด
-ปิด
-สถานะ
-fault
-reset`
-
+`คำสั่ง:
+- เปิด
+- ปิด
+- สถานะ
+- fault
+- reset`
       );
 
     }
 
-    res.sendStatus(200);
+  }, 300);
 
-  }
-  catch (err) {
+});
 
-    console.error(err);
+// ===============================
+// ESP32 GET COMMAND
+// ===============================
+app.get("/command", (req, res) => {
+  res.json({ command });
+});
 
-    res.sendStatus(500);
+// ===============================
+// CLEAR COMMAND
+// ===============================
+app.get("/clear", (req, res) => {
+  command = "NONE";
+  res.json({ result: "OK" });
+});
+
+// ===============================
+// UPDATE STATUS (ESP32)
+// ===============================
+app.post("/updateStatus", (req, res) => {
+
+  try {
+
+    systemStatus.motor = req.body.motor || systemStatus.motor;
+    systemStatus.fault = req.body.fault || systemStatus.fault;
+    systemStatus.online = true;
+
+    updateTime();
+
+    console.log("⚙️ STATUS UPDATE:", systemStatus);
+
+    res.json({ result: "OK" });
+
+  } catch (err) {
+
+    console.log(err);
+    res.status(500).json({ error: err.message });
 
   }
 
 });
 
-// ======================================
-// OFFLINE CHECK
-// ======================================
+// ===============================
+// STATUS CHECK
+// ===============================
+app.get("/status", (req, res) => {
+  res.json(systemStatus);
+});
 
+// ===============================
+// OFFLINE CHECK
+// ===============================
 setInterval(() => {
 
   try {
 
-    if (
-      systemStatus.update !== "-"
-    ) {
+    if (systemStatus.update !== "-") {
 
-      const last =
-        new Date(
-          systemStatus.update
-        ).getTime();
+      const last = new Date(systemStatus.update).getTime();
+      const now = new Date().getTime();
 
-      const now =
-        new Date().getTime();
-
-      if (
-        now - last > 60000
-      ) {
-
+      if (now - last > 60000) {
         systemStatus.online = false;
-
       }
 
     }
 
-  }
-  catch (err) {
-
-    console.error(err);
-
+  } catch (err) {
+    console.log(err.message);
   }
 
 }, 10000);
 
-// ======================================
+// ===============================
 // START SERVER
-// ======================================
-
-const PORT =
-  process.env.PORT || 3000;
+// ===============================
+const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-
-  console.log(
-    "================================"
-  );
-
-  console.log(
-    "Motor Control Server Running"
-  );
-
-  console.log(
-    "================================"
-  );
-
+  console.log("================================");
+  console.log("Motor Control Server Running");
+  console.log("================================");
 });
