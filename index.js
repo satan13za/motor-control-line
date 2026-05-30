@@ -19,9 +19,11 @@ let motorData = {
 let motorCommand = "OFF";
 let targetUserId = process.env.USER_ID || null;
 
+// ฟังก์ชันแจ้งเตือนเข้า LINE (บังคับเป็นเวลาไทย)
 async function notifyLine(message) {
     if (targetUserId) {
-        const timeNow = new Date().toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'medium' });
+        // เพิ่ม timeZone: 'Asia/Bangkok' เพื่อให้เป็นเวลาไทย
+        const timeNow = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'medium' });
         try {
             await client.pushMessage(targetUserId, { 
                 type: 'text', 
@@ -31,6 +33,7 @@ async function notifyLine(message) {
     }
 }
 
+// Watchdog: ตรวจสอบสถานะการเชื่อมต่อ
 setInterval(() => {
     const timeout = 30000;
     if (!motorData.isOffline && (Date.now() - motorData.lastUpdate > timeout)) {
@@ -39,6 +42,7 @@ setInterval(() => {
     }
 }, 5000);
 
+// API รับ Report จาก ESP32
 app.post('/api/motor/report', (req, res) => {
     const { state } = req.body;
     
@@ -66,7 +70,7 @@ app.get('/api/motor/command', (req, res) => {
     res.json({ command: motorCommand });
 });
 
-// Webhook สำหรับ LINE Bot (ปรับปรุงการแสดงผลสถานะ)
+// Webhook สำหรับ LINE Bot
 app.post('/webhook', async (req, res) => {
     res.sendStatus(200);
     const events = req.body.events;
@@ -87,17 +91,16 @@ app.post('/webhook', async (req, res) => {
                 await client.replyMessage(replyToken, { type: 'text', text: "🛑 สั่งปิดมอเตอร์เรียบร้อย" });
             } 
             else if (text === "สถานะ") {
-                const options = { dateStyle: 'short', timeStyle: 'medium' };
+                // บังคับ TimeZone เป็น Asia/Bangkok
+                const options = { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'medium' };
                 const lastChangeStr = new Date(motorData.lastChangeTime).toLocaleString('th-TH', options);
                 const lastUpdateStr = new Date(motorData.lastUpdate).toLocaleString('th-TH', options);
                 
-                // ตีความสถานะมอเตอร์ให้เข้าใจง่าย
                 let motorDisplay = "";
                 if(motorData.state === "RUNNING") motorDisplay = "⚙️ กำลังทำงาน (ON)";
                 else if(motorData.state === "FAULT") motorDisplay = "⚠️ ขัดข้อง (FAULT)";
                 else motorDisplay = "🛑 หยุดทำงาน (STANDBY)";
 
-                // สถานะเชื่อมต่อ
                 let connectDisplay = motorData.isOffline ? "❌ ออฟไลน์ (ไม่เชื่อมต่อ)" : "✅ ออนไลน์ (เชื่อมต่อปกติ)";
 
                 await client.replyMessage(replyToken, {
