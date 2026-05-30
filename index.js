@@ -1,3 +1,8 @@
+// เพิ่มบรรทัดนี้ไว้ส่วนบนๆ ของ index.js
+app.get('/', (req, res) => {
+  res.send('Server is Online and Motor Controller API is ready!');
+});
+
 const express = require('express');
 const { Client } = require('@line/bot-sdk');
 const app = express();
