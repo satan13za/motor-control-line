@@ -31,7 +31,7 @@ async function notifyLine(message) {
     }
 }
 
-// ฟังก์ชันตรวจสอบสถานะก่อนทำงาน (Idempotency)
+// ฟังก์ชันตรวจสอบสถานะแบบ "สำเร็จปุ๊บ ตอบปั๊บ" (ไม่ต้องรอจนครบเวลา)
 async function verifyCommand(initialState, targetState, successMsg, failMsg) {
     console.log(`Checking command: current=${initialState}, target=${targetState}`);
     
@@ -48,15 +48,21 @@ async function verifyCommand(initialState, targetState, successMsg, failMsg) {
         return;
     }
 
-    // 3. ถ้าไม่ตรงกัน ให้รอ ESP32 อัปเดตข้อมูล
-    await new Promise(resolve => setTimeout(resolve, 20000)); 
-    
-    // 4. ตรวจสอบสถานะใหม่หลังจากรอ
-    if (motorData.state === targetState) {
-        notifyLine(successMsg);
-    } else {
-        notifyLine(failMsg);
+    // 3. เริ่มวนลูปตรวจสอบทุก 2 วินาที (สูงสุด 10 รอบ = 20 วินาที)
+    // หากพบว่าสถานะเปลี่ยนแล้ว บอทจะตอบสำเร็จทันที
+    const maxRetries = 10;
+    for (let i = 0; i < maxRetries; i++) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        if (motorData.state === targetState) {
+            notifyLine(successMsg);
+            return; // สำเร็จแล้ว จบฟังก์ชันทันที
+        }
+        console.log(`Checking... attempt ${i + 1}/${maxRetries}`);
     }
+    
+    // 4. ถ้าวนครบ 10 รอบแล้วยังไม่เปลี่ยน ให้แจ้ง Fail
+    notifyLine(failMsg);
 }
 
 const guideMessage = `🤖 ยินดีต้อนรับสู่ระบบควบคุมมอเตอร์อัจฉริยะ
