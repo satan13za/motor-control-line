@@ -1,7 +1,6 @@
 {
   "name": "motor-control-line",
   "version": "1.0.0",
-  "description": "Motor Controller Bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
