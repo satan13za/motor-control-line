@@ -1,47 +1,95 @@
 const axios = require("axios");
 
-const server = "https://motor-control-server.onrender.com";
+// ==========================
+// เปลี่ยนเป็น URL Render ของคุณ
+// ==========================
+const SERVER = "https://motor-control-line.onrender.com";
 
-let motor = "STOP";
-let fault = "NORMAL";
+let LED = 0;
+let RELAY = 0;
+let MOTOR = "STOP";
 
-console.log("SIMULATOR START");
+console.log("🟢 ESP32 SIMULATOR START");
 
+// ==========================
+// LOOP ทำงานเหมือน ESP32
+// ==========================
 async function loop() {
 
   try {
 
-    const res = await axios.get(server + "/command");
-
+    // ==========================
+    // ดึงคำสั่งจาก Server
+    // ==========================
+    const res = await axios.get(SERVER + "/command");
     const cmd = res.data.command;
 
     if (cmd !== "NONE") {
 
-      console.log("CMD:", cmd);
+      console.log("📩 CMD:", cmd);
 
-      if (cmd === "START") motor = "RUN";
-      if (cmd === "STOP") motor = "STOP";
-      if (cmd === "FAULT") fault = "ACTIVE";
-      if (cmd === "RESET") {
-        motor = "STOP";
-        fault = "NORMAL";
+      // ==========================
+      // START
+      // ==========================
+      if (cmd === "START") {
+        LED = 1;
+        RELAY = 1;
+        MOTOR = "RUN";
       }
 
-      await axios.post(server + "/updateStatus", {
-        motor,
-        fault
+      // ==========================
+      // STOP
+      // ==========================
+      else if (cmd === "STOP") {
+        LED = 0;
+        RELAY = 0;
+        MOTOR = "STOP";
+      }
+
+      // ==========================
+      // FAULT
+      // ==========================
+      else if (cmd === "FAULT") {
+        LED = 1;
+        RELAY = 0;
+        MOTOR = "FAULT";
+      }
+
+      // ==========================
+      // RESET
+      // ==========================
+      else if (cmd === "RESET") {
+        LED = 0;
+        RELAY = 0;
+        MOTOR = "STOP";
+      }
+
+      // ==========================
+      // ส่งสถานะกลับ Server
+      // ==========================
+      await axios.post(SERVER + "/updateStatus", {
+        motor: MOTOR,
+        fault: MOTOR === "FAULT" ? "ACTIVE" : "NORMAL"
       });
 
-      await axios.get(server + "/clear");
+      // clear command
+      await axios.get(SERVER + "/clear");
 
-      console.log("STATUS UPDATED");
+      console.log("💾 STATUS:");
+      console.log("LED:", LED);
+      console.log("RELAY:", RELAY);
+      console.log("MOTOR:", MOTOR);
+      console.log("----------------------");
 
     }
 
   } catch (err) {
-    console.log("ERROR:", err.message);
+    console.log("❌ ERROR:", err.message);
   }
 
 }
 
+// ==========================
+// loop ทุก 2 วินาที
+// ==========================
 setInterval(loop, 2000);
