@@ -1,7 +1,7 @@
 const axios = require("axios");
 
 // 🔥 เปลี่ยนเป็น Render URL ของคุณ
-const SERVER = "https://your-app.onrender.com";
+const SERVER = "https://motor-control-line.onrender.com";
 
 let LED = 0;
 let RELAY = 0;
