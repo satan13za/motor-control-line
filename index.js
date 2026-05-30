@@ -41,11 +41,13 @@ const guideMessage = `🤖 ยินดีต้อนรับสู่ระ�
 
 ⚠️ หากพบสภาวะ FAULT โปรดตรวจสอบอุปกรณ์ทันที!`;
 
-// Watchdog: ตรวจสอบสถานะการเชื่อมต่อ (ทำงานเงียบๆ ไม่ Push ข้อความ)
+// Watchdog: ตรวจสอบสถานะการเชื่อมต่อ
 setInterval(() => {
     const timeout = 30000;
+    // ถ้าเกินเวลา 30 วินาที และยังไม่ได้แจ้งว่า Offline
     if (!motorData.isOffline && (Date.now() - motorData.lastUpdate > timeout)) {
-        motorData.isOffline = true; // แค่บันทึกสถานะว่า Offline แต่ไม่แจ้งเตือน
+        motorData.isOffline = true;
+        notifyLine("❌ อุปกรณ์ขาดการเชื่อมต่อ! (ไม่ได้รับข้อมูลเกิน 30 วินาที)");
     }
 }, 5000);
 
@@ -53,9 +55,10 @@ setInterval(() => {
 app.post('/api/motor/report', (req, res) => {
     const { state } = req.body;
     
-    // บันทึกว่ากลับมาออนไลน์
+    // ถ้าเคยออฟไลน์อยู่ แล้วได้รับข้อมูล แสดงว่ากลับมาออนไลน์แล้ว
     if (motorData.isOffline) {
         motorData.isOffline = false; 
+        notifyLine("✅ อุปกรณ์กลับมาออนไลน์และเชื่อมต่อปกติแล้ว");
     }
 
     if (state !== motorData.state) {
@@ -105,15 +108,16 @@ app.post('/webhook', async (req, res) => {
                 const lastChangeStr = new Date(motorData.lastChangeTime).toLocaleString('th-TH', options);
                 const lastUpdateStr = new Date(motorData.lastUpdate).toLocaleString('th-TH', options);
                 
+                // กำหนดสถานะมอเตอร์
                 let motorDisplay = "";
                 if(motorData.state === "RUNNING") motorDisplay = "⚙️ กำลังทำงาน (ON)";
                 else if(motorData.state === "FAULT") motorDisplay = "⚠️ ขัดข้อง (FAULT)";
                 else motorDisplay = "🛑 หยุดทำงาน (STANDBY)";
 
-                // เปลี่ยนข้อความแสดงสถานะการเชื่อมต่อ
+                // กำหนดสถานะการเชื่อมต่อ
                 let connectDisplay = motorData.isOffline 
-                    ? "❌ อุปกรณ์ขาดการเชื่อมต่อ (โปรดตรวจสอบ)" 
-                    : "✅ ระบบเตรียมพร้อมใช้งาน";
+                    ? "❌ อุปกรณ์ออฟไลน์ (ไม่มีสัญญาณ)" 
+                    : "✅ พร้อมใช้งาน (ออนไลน์ปกติ)";
 
                 await client.replyMessage(replyToken, {
                     type: 'text', 
