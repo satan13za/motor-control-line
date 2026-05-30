@@ -33,20 +33,28 @@ async function notifyLine(message) {
     }
 }
 
-// *** เพิ่มฟังก์ชันนี้เข้าไปครับ ***
+// วางต่อจากฟังก์ชัน notifyLine ได้เลยครับ
+
 async function verifyCommand(targetState, successMsg, failMsg) {
     console.log(`Verifying command, waiting for ESP32...`);
-    await new Promise(resolve => setTimeout(resolve, 8000)); // รอ 8 วินาทีเพื่อให้ ESP32 ส่ง Report
     
+    // 1. เช็คก่อนเลยว่าออฟไลน์ไหม
+    if (motorData.isOffline) {
+        notifyLine("❌ สั่งงานไม่สำเร็จ: อุปกรณ์ขาดการเชื่อมต่อ (Offline)");
+        return;
+    }
+
+    // 2. ถ้าออนไลน์ ให้รอ ESP32 อัปเดตข้อมูล
+    await new Promise(resolve => setTimeout(resolve, 8000)); 
+    
+    // 3. ตรวจสอบสถานะ
     if (motorData.state === targetState) {
         notifyLine(successMsg);
     } else {
-        if (motorData.isOffline) {
-            notifyLine("❌ สั่งงานไม่สำเร็จ: อุปกรณ์ออฟไลน์อยู่");
-        } else {
-            notifyLine(failMsg);
-        }
+        // หากไม่ตรงตามเป้าหมาย (เช่น สั่ง ON แต่เครื่องยังเป็น OFF)
+        notifyLine(failMsg);
     }
+}
 }
 
 const guideMessage = `🤖 ยินดีต้อนรับสู่ระบบควบคุมมอเตอร์อัจฉริยะ
