@@ -19,18 +19,18 @@ let systemStatus = {
   motor: "STOP",
   fault: "NORMAL",
   online: false,
-  lastUpdate: Date.now()
+  lastHeartbeat: 0   // 🔥 ใช้ heartbeat จริง
 };
 
 // ===============================
-// ⏱️ UPDATE TIME
+// ⏱️ UPDATE HEARTBEAT
 // ===============================
-function updateTime() {
-  systemStatus.lastUpdate = Date.now();
+function updateHeartbeat() {
+  systemStatus.lastHeartbeat = Date.now();
 }
 
 // ===============================
-// 📢 SEND LINE (PUSH ALERT)
+// 📢 LINE PUSH MESSAGE
 // ===============================
 async function sendLine(text) {
 
@@ -44,22 +44,19 @@ async function sendLine(text) {
       },
       {
         headers: {
-          "Authorization": `Bearer ${TOKEN}`,
-          "Content-Type": "application/json"
+          "Authorization": `Bearer ${TOKEN}`
         }
       }
     );
 
-    console.log("📩 LINE:", text);
-
   } catch (err) {
-    console.log("❌ LINE ERROR:", err.message);
+    console.log("LINE ERROR:", err.message);
   }
 
 }
 
 // ===============================
-// 📩 REPLY LINE
+// 📩 LINE REPLY
 // ===============================
 async function replyMessage(replyToken, text) {
 
@@ -85,7 +82,7 @@ async function replyMessage(replyToken, text) {
 }
 
 // ===============================
-// 🟢 WEBHOOK
+// 🟢 WEBHOOK LINE
 // ===============================
 app.post("/webhook", (req, res) => {
 
@@ -106,8 +103,6 @@ app.post("/webhook", (req, res) => {
 
       command = "START";
       systemStatus.motor = "RUN";
-      systemStatus.online = true;
-      updateTime();
 
       await replyMessage(replyToken, "🟢 เปิดระบบแล้ว");
 
@@ -117,14 +112,11 @@ app.post("/webhook", (req, res) => {
 
       command = "STOP";
       systemStatus.motor = "STOP";
-      updateTime();
 
       await replyMessage(replyToken, "🔴 ปิดระบบแล้ว");
 
-      // 🔥 RESET หลังปิด (เพิ่มใหม่)
-      setTimeout(() => {
-        command = "NONE";
-      }, 3000);
+      // เคลียร์คำสั่ง
+      setTimeout(() => command = "NONE", 2000);
 
     }
 
@@ -133,8 +125,6 @@ app.post("/webhook", (req, res) => {
       command = "RESET";
       systemStatus.motor = "STOP";
       systemStatus.fault = "NORMAL";
-      systemStatus.online = false;
-      updateTime();
 
       await replyMessage(replyToken, "♻️ รีเซ็ตระบบแล้ว");
 
@@ -163,24 +153,24 @@ Online: ${systemStatus.online ? "YES" : "NO"}`
 });
 
 // ===============================
-// 🤖 ESP32 UPDATE STATUS
+// 🤖 ESP32 UPDATE (HEARTBEAT)
 // ===============================
 app.post("/updateStatus", (req, res) => {
 
   systemStatus.motor = req.body.motor || systemStatus.motor;
   systemStatus.fault = req.body.fault || systemStatus.fault;
+
   systemStatus.online = true;
+  updateHeartbeat();
 
-  updateTime();
-
-  console.log("🤖 UPDATE:", systemStatus);
+  console.log("💓 HEARTBEAT:", systemStatus);
 
   res.json({ ok: true });
 
 });
 
 // ===============================
-// 📡 COMMAND
+// 📡 GET COMMAND
 // ===============================
 app.get("/command", (req, res) => {
   res.json({ command });
@@ -195,32 +185,20 @@ app.get("/clear", (req, res) => {
 });
 
 // ===============================
-// 🔴 OFFLINE + AUTO RESET SYSTEM (FIXED)
+// 🔴 OFFLINE DETECTION (FIXED)
 // ===============================
 setInterval(() => {
 
   const now = Date.now();
-  const diff = now - systemStatus.lastUpdate;
+  const diff = now - systemStatus.lastHeartbeat;
 
-  // 🔴 OFFLINE DETECT
-  if (diff > 30000 && systemStatus.online) {
+  if (systemStatus.lastHeartbeat !== 0 && diff > 15000 && systemStatus.online) {
 
     systemStatus.online = false;
 
-    console.log("🔴 SYSTEM OFFLINE");
+    console.log("🔴 OFFLINE DETECTED");
 
-    sendLine("🔴 แจ้งเตือน: ระบบ OFFLINE (ESP32 ไม่ตอบสนอง)");
-
-  }
-
-  // 🔥 AUTO RESET ถ้าค้างนาน
-  if (diff > 120000) {
-
-    command = "RESET";
-    systemStatus.motor = "STOP";
-    systemStatus.fault = "NORMAL";
-
-    console.log("♻️ AUTO RESET SYSTEM");
+    sendLine("🔴 ระบบ OFFLINE (ESP32 ไม่ส่ง Heartbeat)");
 
   }
 
@@ -232,5 +210,5 @@ setInterval(() => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log("🟢 SYSTEM ONLINE");
+  console.log("🟢 SERVER ONLINE");
 });
