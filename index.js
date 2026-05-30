@@ -28,6 +28,24 @@ async function notifyLine(message) {
                 text: `🔔 [ระบบมอเตอร์ - ${timeNow}]:\n${message}` 
             });
         } catch (err) { console.error("Line Push Error:", err); }
+    } else {
+        console.warn("Cannot notify: targetUserId is not set yet.");
+    }
+}
+
+// *** เพิ่มฟังก์ชันนี้เข้าไปครับ ***
+async function verifyCommand(targetState, successMsg, failMsg) {
+    console.log(`Verifying command, waiting for ESP32...`);
+    await new Promise(resolve => setTimeout(resolve, 8000)); // รอ 8 วินาทีเพื่อให้ ESP32 ส่ง Report
+    
+    if (motorData.state === targetState) {
+        notifyLine(successMsg);
+    } else {
+        if (motorData.isOffline) {
+            notifyLine("❌ สั่งงานไม่สำเร็จ: อุปกรณ์ออฟไลน์อยู่");
+        } else {
+            notifyLine(failMsg);
+        }
     }
 }
 
@@ -44,7 +62,6 @@ const guideMessage = `🤖 ยินดีต้อนรับสู่ระ�
 // Watchdog: ตรวจสอบสถานะการเชื่อมต่อ
 setInterval(() => {
     const timeout = 30000;
-    // ถ้าเกินเวลา 30 วินาที และยังไม่ได้แจ้งว่า Offline
     if (!motorData.isOffline && (Date.now() - motorData.lastUpdate > timeout)) {
         motorData.isOffline = true;
         notifyLine("❌ อุปกรณ์ขาดการเชื่อมต่อ! (ไม่ได้รับข้อมูลเกิน 30 วินาที)");
@@ -55,7 +72,6 @@ setInterval(() => {
 app.post('/api/motor/report', (req, res) => {
     const { state } = req.body;
     
-    // ถ้าเคยออฟไลน์อยู่ แล้วได้รับข้อมูล แสดงว่ากลับมาออนไลน์แล้ว
     if (motorData.isOffline) {
         motorData.isOffline = false; 
         notifyLine("✅ อุปกรณ์กลับมาออนไลน์และเชื่อมต่อปกติแล้ว");
@@ -110,13 +126,11 @@ app.post('/webhook', async (req, res) => {
                 const lastChangeStr = new Date(motorData.lastChangeTime).toLocaleString('th-TH', options);
                 const lastUpdateStr = new Date(motorData.lastUpdate).toLocaleString('th-TH', options);
                 
-                // กำหนดสถานะมอเตอร์
                 let motorDisplay = "";
                 if(motorData.state === "RUNNING") motorDisplay = "⚙️ กำลังทำงาน (ON)";
                 else if(motorData.state === "FAULT") motorDisplay = "⚠️ ขัดข้อง (FAULT)";
                 else motorDisplay = "🛑 หยุดทำงาน (STANDBY)";
 
-                // กำหนดสถานะการเชื่อมต่อ
                 let connectDisplay = motorData.isOffline 
                     ? "❌ อุปกรณ์ออฟไลน์ (ไม่มีสัญญาณ)" 
                     : "✅ พร้อมใช้งาน (ออนไลน์ปกติ)";
@@ -132,12 +146,6 @@ app.post('/webhook', async (req, res) => {
             } 
             else if (text === "แนะนำ" || text === "คู่มือ") {
                 await client.replyMessage(replyToken, { type: 'text', text: guideMessage });
-            }
-            else {
-                await client.replyMessage(replyToken, { 
-                    type: 'text', 
-                    text: `⚠️ ไม่เข้าใจคำสั่ง: "${text}"\nพิมพ์ "แนะนำ" เพื่อดูวิธีใช้งาน` 
-                });
             }
         }
     }
