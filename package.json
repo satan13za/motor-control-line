@@ -1,12 +1,10 @@
 {
-  "name": "motor-control-line",
+  "name": "my-motor-bot",
   "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
   "dependencies": {
-    "@line/bot-sdk": "^7.5.2",
-    "express": "^4.18.2"
-  }
+    "express": "^4.18.2",
+    "@line/bot-sdk": "^9.0.0",
+    "ws": "^8.13.0" 
+  },
+  "main": "index.js"
 }
