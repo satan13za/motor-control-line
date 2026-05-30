@@ -1,145 +1,144 @@
-#include <WiFi.h>
-#include <HTTPClient.h>
-#include <WiFiClientSecure.h>
+const express = require('express');
+const { Client } = require('@line/bot-sdk');
 
-// --- 🌐 ตั้งค่าเน็ตเวิร์กและลิงก์เซิร์ฟเวอร์ของคุณ ---
-const char* ssid = "Wokwi-GUEST"; 
-const char* password = "";        
-const char* commandUrl = "https://motor-control-line.onrender.com/api/motor/command";
-const char* reportUrl  = "https://motor-control-line.onrender.com/api/motor/report";
+const app = express();
+app.use(express.json());
 
-// --- 📌 กำหนดขาพินอุปกรณ์ตามจริง ---
-#define LED_GREEN  12  // ไฟ RUN (สีเขียว)
-#define LED_YELLOW 14  // ไฟ STANDBY (สีเหลือง)
-#define LED_RED    26  // ไฟ FAULT (สีแดง)
-#define BTN_FAULT  21  // ปุ่มกด TEST FAULT (ขา 21)
+// --- ตั้งค่าระบบเชื่อมต่อ LINE Bot ---
+const config = {
+  channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.CHANNEL_SECRET,
+};
+const client = new Client(config);
 
-String localState = "STANDBY"; // ตัวจำสถานะภายในบอร์ด ("STANDBY", "RUNNING", "FAULT")
-unsigned long lastCheckTime = 0;
-const unsigned long checkInterval = 2000; // วิ่งไปถามไลน์ทุกๆ 2 วินาที
+// --- ตัวแปรหลักในการควบคุมระบบ ---
+let motorCommand = "OFF";          // คำสั่งควบคุมหลัก: ON หรือ OFF
+let lastReportedState = "STANDBY";  // สถานะจริงที่บอร์ดรายงานกลับมา: STANDBY, RUNNING, FAULT
+let targetUserId = null;          // ไอดีไลน์ของผู้ใช้งาน (จะบันทึกอัตโนมัติเมื่อคุยกับบอท)
+let lastSeen = Date.now();         // เวลาล่าสุดที่บอร์ดติดต่อเข้ามา (ใช้เช็ค Heartbeat)
+let isOfflineReported = false;     // เช็คว่าได้แจ้งเตือนออฟไลน์ไปแล้วหรือยัง
 
-void sendStatusReport(String state);
-
-void setup() {
-  Serial.begin(115200);
-  
-  pinMode(LED_GREEN, OUTPUT);
-  pinMode(LED_YELLOW, OUTPUT);
-  pinMode(LED_RED, OUTPUT);
-  pinMode(BTN_FAULT, INPUT_PULLUP); // ใช้ Pullup ภายใน ขา 21
-
-  // เริ่มต้นตู้ควบคุม: ให้ไฟสีเหลืองติดแสตนบายไว้
-  digitalWrite(LED_GREEN, LOW);
-  digitalWrite(LED_YELLOW, HIGH);
-  digitalWrite(LED_RED, LOW);
-
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to Wokwi WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\nWiFi Connected Successfully!");
-  
-  // รายงานตัวนัดแรกกับเซิร์ฟเวอร์
-  sendStatusReport(localState); 
-}
-
-void loop() {
-  // -------------------------------------------------------------
-  // จังหวะที่ 1: ตรวจจับปุ่ม Fault (ขา 21) แบบเรียลไทม์ + ระบบ Debounce
-  // -------------------------------------------------------------
-  bool isButtonPressed = (digitalRead(BTN_FAULT) == LOW);
-
-  if (isButtonPressed) {
-    // ถ้าปุ่มโดนกด และตู้ยังไม่รับรู้ว่าเป็น FAULT -> ล็อกสถานะทันที
-    if (localState != "FAULT") {
-      localState = "FAULT";
-      digitalWrite(LED_GREEN, LOW);
-      digitalWrite(LED_YELLOW, LOW);
-      digitalWrite(LED_RED, HIGH);
-      Serial.println("🚨 EMERGENCY: ตรวจพบเหตุขัดข้องที่ปุ่มกด ขา 21!");
-      
-      sendStatusReport("FAULT");
-      delay(400); // 🛡️ หน่วงเวลาสั้นๆ เพื่อให้แรงดันไฟฟ้าคงที่ ป้องกันการยิงคำสั่งรัวๆ
-    }
-  } 
-  else {
-    // ถ้าปล่อยนิ้วออกจากปุ่มแล้ว และตู้ยังค้างสถานะ FAULT -> ให้ดึงกลับมาปกติ
-    if (localState == "FAULT") {
-      localState = "STANDBY";
-      digitalWrite(LED_GREEN, LOW);
-      digitalWrite(LED_YELLOW, HIGH);
-      digitalWrite(LED_RED, LOW);
-      Serial.println("🔄 RECOVERY: เหตุขัดข้องคลี่คลาย ระบบกลับสู่สแตนบาย");
-      
-      sendStatusReport("STANDBY");
-      delay(400); // 🛡️ กันสัญญาณกระเพื่อมตอนปล่อยนิ้ว
+// ฟังก์ชันอัปเดตเวลาเชื่อมต่อเมื่อบอร์ดทักมา
+const updateHeartbeat = () => {
+  lastSeen = Date.now();
+  if (isOfflineReported) {
+    isOfflineReported = false;
+    if (targetUserId) {
+      client.pushMessage(targetUserId, { 
+        type: 'text', 
+        text: '✅ [ระบบ] ตู้ควบคุมกลับมาเชื่อมต่อออนไลน์ และเริ่มทำงานอีกครั้งแล้ว' 
+      }).catch(err => console.error(err));
     }
   }
+};
 
-  // -------------------------------------------------------------
-  // จังหวะที่ 2: ไปดึงคำสั่ง เปิด/ปิด จาก LINE (ทำเฉพาะตอนที่ตู้ไม่ได้พัง)
-  // -------------------------------------------------------------
-  if (millis() - lastCheckTime >= checkInterval) {
-    lastCheckTime = millis();
+// -------------------------------------------------------------
+// [1] Endpoint: สำหรับให้ ESP32 มารับคำสั่ง (ON / OFF)
+// -------------------------------------------------------------
+app.get('/api/motor/command', (req, res) => {
+  updateHeartbeat(); // บอร์ดติดต่อเข้ามาดึงข้อมูล = บอร์ดยังทำงานอยู่
+  res.json({ command: motorCommand });
+});
+
+// -------------------------------------------------------------
+// [2] Endpoint: สำหรับรับรายงานสถานะจริงจากบอร์ด และแจ้งเตือนเข้า LINE
+// -------------------------------------------------------------
+app.post('/api/motor/report', (req, res) => {
+  updateHeartbeat();
+  const { state } = req.body;
+  console.log(`[ESP32 Report] สถานะจริงจากบอร์ด: ${state}`);
+  
+  // ตรวจสอบว่าสถานะมีการเปลี่ยนแปลงจากเดิมไหม เพื่อไม่ให้ไลน์เด้งซ้ำซ้อน
+  if (state !== lastReportedState) {
+    lastReportedState = state;
     
-    if (localState != "FAULT" && WiFi.status() == WL_CONNECTED) {
-      WiFiClientSecure client;
-      client.setInsecure(); 
+    if (targetUserId) {
+      let messageText = "";
       
-      HTTPClient http;
-      http.begin(client, commandUrl);
-      http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-      
-      int httpCode = http.GET();
-      
-      if (httpCode == 200) {
-        String payload = http.getString();
-        Serial.println("Fetched LINE command: " + payload);
-        
-        // ตรวจสอบคำสั่งผสมสถานะปัจจุบัน เพื่อไม่ให้ยิงรายงานซ้ำซ้อน
-        if (payload.indexOf("ON") >= 0) {
-          if (localState != "RUNNING") {
-            localState = "RUNNING";
-            digitalWrite(LED_GREEN, HIGH);
-            digitalWrite(LED_YELLOW, LOW);
-            digitalWrite(LED_RED, LOW);
-            sendStatusReport("RUNNING");
-          }
-        } 
-        else if (payload.indexOf("OFF") >= 0) {
-          if (localState != "STANDBY") {
-            localState = "STANDBY";
-            digitalWrite(LED_GREEN, LOW);
-            digitalWrite(LED_YELLOW, HIGH);
-            digitalWrite(LED_RED, LOW);
-            sendStatusReport("STANDBY");
-          }
-        }
+      // เงื่อนไขการแจ้งเตือนสถานะต่างๆ 
+      if (state === "FAULT") {
+        messageText = "🚨 [แจ้งเตือนอันตราย] ตู้ควบคุมตรวจพบสถานะ ผิดปกติ (Fault)! ระบบตัดการทำงานทันที กรุณาตรวจสอบหน้างานด่วน!";
+      } else if (state === "RUNNING") {
+        messageText = "🟢 [สถานะการทำงาน] มอเตอร์สตาร์ทเครื่องและกำลังทำงานเรียบร้อยแล้ว (Running)";
+      } else if (state === "STANDBY") {
+        messageText = "🟡 [สถานะการทำงาน] มอเตอร์หยุดการทำงานและเข้าสู่โหมดสแตนบายเรียบร้อยแล้ว (Standby)";
       }
-      http.end();
+      
+      // ส่งข้อความดัน (Push Message) แจ้งผู้ใช้ทันทีเมื่อบอร์ดทำงานสำเร็จ
+      client.pushMessage(targetUserId, { type: 'text', text: messageText })
+        .catch(err => console.error("LINE Push Error:", err));
     }
   }
-}
+  res.sendStatus(200);
+});
 
-void sendStatusReport(String state) {
-  if (WiFi.status() == WL_CONNECTED) {
-    WiFiClientSecure client;
-    client.setInsecure();
-    
-    HTTPClient http;
-    http.begin(client, reportUrl);
-    http.addHeader("Content-Type", "application/json");
-    
-    String jsonBody = "{\"state\":\"" + state + "\"}";
-    int httpCode = http.POST(jsonBody);
-    
-    Serial.print(">> [Report Sent] State: ");
-    Serial.print(state);
-    Serial.print(" | Server Response: ");
-    Serial.println(httpCode);
-    
-    http.end();
+// -------------------------------------------------------------
+// [3] ระบบตรวจสอบอัตโนมัติ: บอร์ดหาย/เน็ตหลุด (เช็คทุกๆ 5 วินาที)
+// -------------------------------------------------------------
+setInterval(() => {
+  const timeDifference = Date.now() - lastSeen;
+  
+  // ถ้าบอร์ดหายไปเกิน 15 วินาที และยังไม่เคยแจ้งเตือน
+  if (targetUserId && !isOfflineReported && timeDifference > 15000) {
+    isOfflineReported = true;
+    client.pushMessage(targetUserId, { 
+      type: 'text', 
+      text: '⚠️ [เตือนภัย] ตู้ควบคุมขาดการติดต่อ (Offline) เกิน 15 วินาที! กรุณาตรวจสอบปลั๊กไฟหรือสัญญาณ Wi-Fi ของบอร์ด' 
+    }).catch(err => console.error(err));
   }
-}
+}, 5000);
+
+// -------------------------------------------------------------
+// [4] Webhook: รับข้อความสั่งการจาก LINE App
+// -------------------------------------------------------------
+app.post('/webhook', (req, res) => {
+  const events = req.body.events;
+  
+  events.forEach(event => {
+    if (event.type === 'message' && event.message.type === 'text') {
+      const text = event.message.text.trim();
+      targetUserId = event.source.userId; // บันทึก ID LINE ไว้สำหรับส่งแจ้งเตือนด่วน
+      
+      if (text === "เปิด") {
+        motorCommand = "ON";
+        client.replyMessage(event.replyToken, { 
+          type: 'text', 
+          text: '📥 [รับคำสั่ง] กำลังส่งสัญญาณ "เปิดมอเตอร์" ไปยังตู้ควบคุม... (รอการตอบกลับจากบอร์ด)' 
+        });
+      } 
+      else if (text === "ปิด") {
+        motorCommand = "OFF";
+        client.replyMessage(event.replyToken, { 
+          type: 'text', 
+          text: '📥 [รับคำสั่ง] กำลังส่งสัญญาณ "ปิดมอเตอร์" ไปยังตู้ควบคุม... (รอการตอบกลับจากบอร์ด)' 
+        });
+      } 
+      else if (text === "เช็คสถานะ") {
+        const isOffline = (Date.now() - lastSeen > 15000);
+        const connectionText = isOffline ? "🔴 ออฟไลน์ (Offline/ขาดการติดต่อ)" : "🟢 ออนไลน์ (Online)";
+        
+        let motorText = "";
+        if (lastReportedState === "FAULT") motorText = "🚨 ผิดปกติ (Fault)";
+        else if (lastReportedState === "RUNNING") motorText = "🟢 กำลังทำงาน (Running)";
+        else if (lastReportedState === "STANDBY") motorText = "🟡 สแตนบาย (Standby)";
+
+        const replyText = `📊 รายงานสถานะตู้ควบคุมเรียลไทม์:\n\n` +
+                          `• การเชื่อมต่อเซิร์ฟเวอร์: ${connectionText}\n` +
+                          `• สถานะตู้ควบคุมจริง: ${motorText}\n` +
+                          `• คำสั่งล่าสุดในระบบ: ${motorCommand}`;
+                          
+        client.replyMessage(event.replyToken, { type: 'text', text: replyText });
+      } 
+      else {
+        client.replyMessage(event.replyToken, { 
+          type: 'text', 
+          text: '🤖 ยินดีต้อนรับสู่ตู้ควบคุมมอเตอร์อัจฉริยะ\n\n📌 คำสั่งที่ใช้งานได้:\n- พิมพ์คำว่า "เปิด" เพื่อเปิดระบบ\n- พิมพ์คำว่า "ปิด" เพื่อปิดระบบ\n- พิมพ์คำว่า "เช็คสถานะ" เพื่อดูข้อมูลปัจจุบัน' 
+        });
+      }
+    }
+  });
+  res.sendStatus(200);
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
