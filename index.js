@@ -5,7 +5,7 @@ const app = express();
 app.use(express.json());
 
 const client = new Client({ 
-    channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN, 
+    channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
     channelSecret: process.env.CHANNEL_SECRET 
 });
 
