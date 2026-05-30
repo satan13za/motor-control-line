@@ -97,11 +97,13 @@ app.post('/webhook', async (req, res) => {
 
             if (text === "เปิด") {
                 motorCommand = "ON";
-                await client.replyMessage(replyToken, { type: 'text', text: "✅ สั่งเปิดมอเตอร์เรียบร้อย" });
+                await client.replyMessage(replyToken, { type: 'text', text: "⏳ กำลังส่งคำสั่งเปิดมอเตอร์..." });
+                verifyCommand("RUNNING", "✅ มอเตอร์เปิดทำงานเรียบร้อย", "❌ แจ้งเตือน: เปิดมอเตอร์ไม่สำเร็จ (กรุณาตรวจสอบอุปกรณ์)");
             } 
             else if (text === "ปิด") {
                 motorCommand = "OFF";
-                await client.replyMessage(replyToken, { type: 'text', text: "🛑 สั่งปิดมอเตอร์เรียบร้อย" });
+                await client.replyMessage(replyToken, { type: 'text', text: "⏳ กำลังส่งคำสั่งปิดมอเตอร์..." });
+                verifyCommand("STANDBY", "🛑 มอเตอร์ปิดทำงานเรียบร้อย", "❌ แจ้งเตือน: ปิดมอเตอร์ไม่สำเร็จ (กรุณาตรวจสอบอุปกรณ์)");
             } 
             else if (text === "สถานะ") {
                 const options = { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'medium' };
