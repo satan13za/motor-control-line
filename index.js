@@ -10,18 +10,24 @@ const client = new Client({
 
 let motorCommand = "OFF";
 let lastReportedState = "STANDBY";
+// แก้ไข: ใช้ process.env.USER_ID เป็นตัวหลัก ถ้าไม่มีค่อยใช้ตัวแปรที่รับมาจากไลน์
 let targetUserId = process.env.USER_ID || null; 
 let lastSeen = Date.now();
-let isOfflineReported = false;
 
 app.post('/api/motor/report', (req, res) => {
   lastSeen = Date.now();
-  if (isOfflineReported) { isOfflineReported = false; }
-  
   const { state } = req.body;
+  console.log(`[Report] รับค่า: ${state} | TargetID: ${targetUserId}`);
+
   if (state && state !== lastReportedState) {
     lastReportedState = state;
-    if (targetUserId) client.pushMessage(targetUserId, {type:'text', text:`📊 สถานะ: ${state}`}).catch(console.error);
+    if (targetUserId) {
+        client.pushMessage(targetUserId, {type:'text', text:`📊 รายงานสถานะ: ${state}`})
+        .then(() => console.log("แจ้งเตือนสำเร็จ"))
+        .catch(err => console.error("แจ้งเตือนพลาด:", err));
+    } else {
+        console.log("Error: ไม่มี Target ID ส่งหาใครไม่ได้!");
+    }
   }
   res.sendStatus(200);
 });
@@ -33,23 +39,18 @@ app.get('/api/motor/command', (req, res) => {
 
 app.post('/webhook', (req, res) => {
   req.body.events.forEach(event => {
-    if (event.type === 'message') {
-      targetUserId = event.source.userId;
+    // อัปเดต ID ทุกครั้งที่มีการคุย เพื่อความชัวร์
+    if (event.source.userId) targetUserId = event.source.userId;
+    
+    if (event.type === 'message' && event.message.type === 'text') {
       const text = event.message.text.trim();
       if (text === "เปิด") motorCommand = "ON";
-      if (text === "ปิด") motorCommand = "OFF";
+      else if (text === "ปิด") motorCommand = "OFF";
       client.replyMessage(event.replyToken, {type: 'text', text: `รับคำสั่ง: ${text}`});
     }
   });
   res.sendStatus(200);
 });
-
-setInterval(() => {
-  if (Date.now() - lastSeen > 120000 && !isOfflineReported && targetUserId) {
-    isOfflineReported = true;
-    client.pushMessage(targetUserId, {type:'text', text:'⚠️ ตู้ควบคุมขาดการติดต่อเกิน 2 นาที'}).catch(console.error);
-  }
-}, 30000);
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
