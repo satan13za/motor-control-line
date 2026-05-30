@@ -31,10 +31,7 @@ async function notifyLine(message) {
     }
 }
 
-// ข้อความแนะนำการใช้งาน
 const guideMessage = `🤖 ยินดีต้อนรับสู่ระบบควบคุมมอเตอร์อัจฉริยะ
-
-บอทนี้ใช้สำหรับควบคุมและตรวจสอบสถานะมอเตอร์แบบ Real-time:
 
 📋 คำสั่งที่ใช้งานได้:
 - 【เปิด】 : สั่งเปิดมอเตอร์
@@ -42,20 +39,25 @@ const guideMessage = `🤖 ยินดีต้อนรับสู่ระ�
 - 【สถานะ】 : ตรวจสอบสถานะมอเตอร์และการเชื่อมต่อ
 - 【แนะนำ】 : เรียกดูคู่มือการใช้งาน
 
-⚠️ ข้อควรระวัง: 
-หากได้รับแจ้งเตือนสถานะ "FAULT" โปรดเข้าตรวจสอบอุปกรณ์หน้างานทันที!`;
+⚠️ หากพบสภาวะ FAULT โปรดตรวจสอบอุปกรณ์ทันที!`;
 
+// Watchdog: ตรวจสอบสถานะการเชื่อมต่อ (ทำงานเงียบๆ ไม่ Push ข้อความ)
 setInterval(() => {
     const timeout = 30000;
     if (!motorData.isOffline && (Date.now() - motorData.lastUpdate > timeout)) {
-        motorData.isOffline = true;
-        notifyLine("⚠️ แจ้งเตือน: อุปกรณ์ขาดการเชื่อมต่อ (ไม่ได้รับข้อมูลเกิน 30 วินาที)");
+        motorData.isOffline = true; // แค่บันทึกสถานะว่า Offline แต่ไม่แจ้งเตือน
     }
 }, 5000);
 
+// API รับ Report จาก ESP32
 app.post('/api/motor/report', (req, res) => {
     const { state } = req.body;
     
+    // บันทึกว่ากลับมาออนไลน์
+    if (motorData.isOffline) {
+        motorData.isOffline = false; 
+    }
+
     if (state !== motorData.state) {
         motorData.state = state;
         motorData.lastChangeTime = Date.now();
@@ -65,11 +67,6 @@ app.post('/api/motor/report', (req, res) => {
         } else {
             notifyLine(`สถานะการทำงานเปลี่ยนเป็น: ${state}`);
         }
-    }
-
-    if (motorData.isOffline) {
-        motorData.isOffline = false;
-        notifyLine("✅ อุปกรณ์กลับมาออนไลน์แล้ว");
     }
 
     motorData.lastUpdate = Date.now();
@@ -87,12 +84,10 @@ app.post('/webhook', async (req, res) => {
     for (const event of events) {
         if (event.source.userId) targetUserId = event.source.userId;
         
-        // 1. กรณีผู้ใช้กดเพิ่มเพื่อน (Welcome Message)
         if (event.type === 'follow') {
             await client.replyMessage(event.replyToken, { type: 'text', text: guideMessage });
         }
         
-        // 2. กรณีผู้ใช้ส่งข้อความ
         if (event.type === 'message' && event.message.text) {
             const text = event.message.text.trim();
             const replyToken = event.replyToken;
@@ -115,7 +110,10 @@ app.post('/webhook', async (req, res) => {
                 else if(motorData.state === "FAULT") motorDisplay = "⚠️ ขัดข้อง (FAULT)";
                 else motorDisplay = "🛑 หยุดทำงาน (STANDBY)";
 
-                let connectDisplay = motorData.isOffline ? "❌ ออฟไลน์" : "✅ ออนไลน์";
+                // เปลี่ยนข้อความแสดงสถานะการเชื่อมต่อ
+                let connectDisplay = motorData.isOffline 
+                    ? "❌ อุปกรณ์ขาดการเชื่อมต่อ (โปรดตรวจสอบ)" 
+                    : "✅ ระบบเตรียมพร้อมใช้งาน";
 
                 await client.replyMessage(replyToken, {
                     type: 'text', 
