@@ -9,32 +9,36 @@ const client = new Client({
     channelSecret: process.env.CHANNEL_SECRET 
 });
 
-// เก็บสถานะแบบละเอียด
 let motorData = {
-    state: "STANDBY",           // สถานะปัจจุบัน: RUNNING, STANDBY, FAULT
-    lastUpdate: Date.now(),      // เวลาที่ ESP32 ติดต่อล่าสุด
-    lastChangeTime: Date.now(),  // เวลาที่เปลี่ยนสถานะล่าสุด
-    isOffline: false             // สถานะการเชื่อมต่อ
+    state: "STANDBY",           
+    lastUpdate: Date.now(),      
+    lastChangeTime: Date.now(),  
+    isOffline: false             
 };
 
 let motorCommand = "OFF";
 let targetUserId = process.env.USER_ID || null;
 
-// ฟังก์ชันแจ้งเตือนเข้า LINE
+// ฟังก์ชันแจ้งเตือนเข้า LINE (รวมวันที่และเวลา)
 async function notifyLine(message) {
     if (targetUserId) {
+        // เพิ่ม DateStyle และ TimeStyle เพื่อให้แสดงวันที่และเวลา
+        const timeNow = new Date().toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'medium' });
         try {
-            await client.pushMessage(targetUserId, { type: 'text', text: `🔔 [ระบบมอเตอร์]: ${message}` });
+            await client.pushMessage(targetUserId, { 
+                type: 'text', 
+                text: `🔔 [ระบบมอเตอร์ - ${timeNow}]:\n${message}` 
+            });
         } catch (err) { console.error("Line Push Error:", err); }
     }
 }
 
-// Watchdog: ตรวจสอบสถานะการเชื่อมต่อทุก 5 วินาที
+// Watchdog: ตรวจสอบสถานะการเชื่อมต่อ
 setInterval(() => {
     const timeout = 30000; // 30 วินาที
     if (!motorData.isOffline && (Date.now() - motorData.lastUpdate > timeout)) {
         motorData.isOffline = true;
-        notifyLine("⚠️ อุปกรณ์ขาดการเชื่อมต่อ! (ไม่ได้รับข้อมูลเกิน 30 วินาที)");
+        notifyLine("⚠️ แจ้งเตือน: อุปกรณ์ขาดการเชื่อมต่อ (ไม่ได้รับข้อมูลเกิน 30 วินาที)");
     }
 }, 5000);
 
@@ -42,14 +46,17 @@ setInterval(() => {
 app.post('/api/motor/report', (req, res) => {
     const { state } = req.body;
     
-    // ตรวจสอบสถานะว่ามีการเปลี่ยนหรือไม่
     if (state !== motorData.state) {
         motorData.state = state;
         motorData.lastChangeTime = Date.now();
-        notifyLine(`สถานะเปลี่ยนเป็น: ${state}`);
+
+        if (state === "FAULT") {
+            notifyLine("⚠️ แจ้งเตือน: พบสภาวะ FAULT! โปรดเข้าตรวจสอบอุปกรณ์ทันที");
+        } else {
+            notifyLine(`สถานะเปลี่ยนเป็น: ${state}`);
+        }
     }
 
-    // ถ้าเครื่องเคย offline แล้วกลับมาออนไลน์
     if (motorData.isOffline) {
         motorData.isOffline = false;
         notifyLine("✅ อุปกรณ์กลับมาออนไลน์แล้ว");
@@ -64,13 +71,11 @@ app.get('/api/motor/command', (req, res) => {
     res.json({ command: motorCommand });
 });
 
-// ปรับแก้เฉพาะใน Webhook เพื่อให้การตอบกลับเสถียรที่สุด
-app.post('/webhook', async (req, res) => { // ใส่ async
+// Webhook สำหรับ LINE Bot
+app.post('/webhook', async (req, res) => {
+    res.sendStatus(200);
     const events = req.body.events;
     
-    // ส่ง 200 กลับไปให้ LINE ทันทีที่รับ Event (เพื่อไม่ให้ LINE มองว่า Server เราช้า)
-    res.sendStatus(200);
-
     for (const event of events) {
         if (event.source.userId) targetUserId = event.source.userId;
         
@@ -87,8 +92,11 @@ app.post('/webhook', async (req, res) => { // ใส่ async
                 await client.replyMessage(replyToken, { type: 'text', text: "🛑 สั่งปิดมอเตอร์เรียบร้อย" });
             } 
             else if (text === "สถานะ") {
-                const lastChangeStr = new Date(motorData.lastChangeTime).toLocaleTimeString('th-TH');
-                const lastUpdateStr = new Date(motorData.lastUpdate).toLocaleTimeString('th-TH');
+                // แสดงวันที่และเวลาในการรายงานสถานะ
+                const options = { dateStyle: 'short', timeStyle: 'medium' };
+                const lastChangeStr = new Date(motorData.lastChangeTime).toLocaleString('th-TH', options);
+                const lastUpdateStr = new Date(motorData.lastUpdate).toLocaleString('th-TH', options);
+                
                 await client.replyMessage(replyToken, {
                     type: 'text', 
                     text: `📊 สถานะ: ${motorData.state}\nเปลี่ยนล่าสุด: ${lastChangeStr}\nอัปเดตล่าสุด: ${lastUpdateStr}${motorData.isOffline ? '\n❌ อุปกรณ์สถานะ: ออฟไลน์' : '\n✅ อุปกรณ์สถานะ: ออนไลน์'}`
@@ -97,7 +105,7 @@ app.post('/webhook', async (req, res) => { // ใส่ async
             else {
                 await client.replyMessage(replyToken, { 
                     type: 'text', 
-                    text: `⚠️ ไม่เข้าใจคำสั่ง: "${text}"` 
+                    text: `⚠️ ไม่เข้าใจคำสั่ง: "${text}"\nคำสั่งที่ใช้ได้คือ:\n- เปิด\n- ปิด\n- สถานะ` 
                 });
             }
         }
