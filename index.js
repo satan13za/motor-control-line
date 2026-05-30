@@ -49,7 +49,7 @@ async function verifyCommand(initialState, targetState, successMsg, failMsg) {
     }
 
     // 3. ถ้าไม่ตรงกัน ให้รอ ESP32 อัปเดตข้อมูล
-    await new Promise(resolve => setTimeout(resolve, 8000)); 
+    await new Promise(resolve => setTimeout(resolve, 12000)); 
     
     // 4. ตรวจสอบสถานะใหม่หลังจากรอ
     if (motorData.state === targetState) {
