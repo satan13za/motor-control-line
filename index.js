@@ -1,23 +1,18 @@
-// 1. เรียกใช้งาน Library (ต้องวางบนสุด)
 const express = require('express');
 const { Client } = require('@line/bot-sdk');
 
-// 2. สร้าง app (ต้องวางก่อนที่จะเริ่มใช้ app.get หรือ app.post)
 const app = express();
 app.use(express.json());
 
-// 3. ตั้งค่า LINE Client
 const client = new Client({ 
     channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN, 
     channelSecret: process.env.CHANNEL_SECRET 
 });
 
-// 4. ตั้งค่าตัวแปร
 let motorCommand = "OFF";
 let lastReportedState = "STANDBY";
 let targetUserId = process.env.USER_ID || null;
 
-// 5. เขียน Routes (วางหลังจากสร้าง app แล้ว)
 app.get('/', (req, res) => {
     res.send('Server is Online and Motor Controller API is ready!');
 });
@@ -53,6 +48,5 @@ app.post('/webhook', (req, res) => {
     res.sendStatus(200);
 });
 
-// 6. รันเซิร์ฟเวอร์
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
