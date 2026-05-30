@@ -28,33 +28,35 @@ async function notifyLine(message) {
                 text: `🔔 [ระบบมอเตอร์ - ${timeNow}]:\n${message}` 
             });
         } catch (err) { console.error("Line Push Error:", err); }
-    } else {
-        console.warn("Cannot notify: targetUserId is not set yet.");
     }
 }
 
-// วางต่อจากฟังก์ชัน notifyLine ได้เลยครับ
-
-async function verifyCommand(targetState, successMsg, failMsg) {
-    console.log(`Verifying command, waiting for ESP32...`);
+// ฟังก์ชันตรวจสอบสถานะก่อนทำงาน (Idempotency)
+async function verifyCommand(initialState, targetState, successMsg, failMsg) {
+    console.log(`Checking command: current=${initialState}, target=${targetState}`);
     
-    // 1. เช็คก่อนเลยว่าออฟไลน์ไหม
+    // 1. เช็ค Offline
     if (motorData.isOffline) {
         notifyLine("❌ สั่งงานไม่สำเร็จ: อุปกรณ์ขาดการเชื่อมต่อ (Offline)");
         return;
     }
 
-    // 2. ถ้าออนไลน์ ให้รอ ESP32 อัปเดตข้อมูล
+    // 2. เช็คว่าสถานะเดิมตรงกับเป้าหมายไหม (ถ้าตรงกันคือไม่ต้องทำอะไร)
+    if (initialState === targetState) {
+        const action = (targetState === "RUNNING") ? "เปิด" : "ปิด";
+        notifyLine(`ℹ️ มอเตอร์${action}อยู่แล้วครับ ไม่ต้องทำรายการซ้ำ`);
+        return;
+    }
+
+    // 3. ถ้าไม่ตรงกัน ให้รอ ESP32 อัปเดตข้อมูล
     await new Promise(resolve => setTimeout(resolve, 8000)); 
     
-    // 3. ตรวจสอบสถานะ
+    // 4. ตรวจสอบสถานะใหม่หลังจากรอ
     if (motorData.state === targetState) {
         notifyLine(successMsg);
     } else {
-        // หากไม่ตรงตามเป้าหมาย (เช่น สั่ง ON แต่เครื่องยังเป็น OFF)
         notifyLine(failMsg);
     }
-}
 }
 
 const guideMessage = `🤖 ยินดีต้อนรับสู่ระบบควบคุมมอเตอร์อัจฉริยะ
@@ -120,14 +122,16 @@ app.post('/webhook', async (req, res) => {
             const replyToken = event.replyToken;
 
             if (text === "เปิด") {
+                const currentState = motorData.state; 
                 motorCommand = "ON";
                 await client.replyMessage(replyToken, { type: 'text', text: "⏳ กำลังส่งคำสั่งเปิดมอเตอร์..." });
-                verifyCommand("RUNNING", "✅ มอเตอร์เปิดทำงานเรียบร้อย", "❌ แจ้งเตือน: เปิดมอเตอร์ไม่สำเร็จ (กรุณาตรวจสอบอุปกรณ์)");
+                verifyCommand(currentState, "RUNNING", "✅ มอเตอร์เปิดทำงานเรียบร้อย", "❌ แจ้งเตือน: เปิดมอเตอร์ไม่สำเร็จ");
             } 
             else if (text === "ปิด") {
+                const currentState = motorData.state;
                 motorCommand = "OFF";
                 await client.replyMessage(replyToken, { type: 'text', text: "⏳ กำลังส่งคำสั่งปิดมอเตอร์..." });
-                verifyCommand("STANDBY", "🛑 มอเตอร์ปิดทำงานเรียบร้อย", "❌ แจ้งเตือน: ปิดมอเตอร์ไม่สำเร็จ (กรุณาตรวจสอบอุปกรณ์)");
+                verifyCommand(currentState, "STANDBY", "🛑 มอเตอร์ปิดทำงานเรียบร้อย", "❌ แจ้งเตือน: ปิดมอเตอร์ไม่สำเร็จ");
             } 
             else if (text === "สถานะ") {
                 const options = { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'medium' };
