@@ -64,9 +64,14 @@ app.get('/api/motor/command', (req, res) => {
     res.json({ command: motorCommand });
 });
 
-// Webhook สำหรับ LINE Bot
-app.post('/webhook', (req, res) => {
-    req.body.events.forEach(event => {
+// ปรับแก้เฉพาะใน Webhook เพื่อให้การตอบกลับเสถียรที่สุด
+app.post('/webhook', async (req, res) => { // ใส่ async
+    const events = req.body.events;
+    
+    // ส่ง 200 กลับไปให้ LINE ทันทีที่รับ Event (เพื่อไม่ให้ LINE มองว่า Server เราช้า)
+    res.sendStatus(200);
+
+    for (const event of events) {
         if (event.source.userId) targetUserId = event.source.userId;
         
         if (event.type === 'message' && event.message.text) {
@@ -75,30 +80,28 @@ app.post('/webhook', (req, res) => {
 
             if (text === "เปิด") {
                 motorCommand = "ON";
-                client.replyMessage(replyToken, { type: 'text', text: "✅ สั่งเปิดมอเตอร์เรียบร้อย" });
+                await client.replyMessage(replyToken, { type: 'text', text: "✅ สั่งเปิดมอเตอร์เรียบร้อย" });
             } 
             else if (text === "ปิด") {
                 motorCommand = "OFF";
-                client.replyMessage(replyToken, { type: 'text', text: "🛑 สั่งปิดมอเตอร์เรียบร้อย" });
+                await client.replyMessage(replyToken, { type: 'text', text: "🛑 สั่งปิดมอเตอร์เรียบร้อย" });
             } 
             else if (text === "สถานะ") {
                 const lastChangeStr = new Date(motorData.lastChangeTime).toLocaleTimeString('th-TH');
                 const lastUpdateStr = new Date(motorData.lastUpdate).toLocaleTimeString('th-TH');
-                client.replyMessage(replyToken, {
+                await client.replyMessage(replyToken, {
                     type: 'text', 
-                    text: `📊 สถานะ: ${motorData.state}\nเปลี่ยนสถานะล่าสุด: ${lastChangeStr}\nได้รับข้อมูลล่าสุด: ${lastUpdateStr}${motorData.isOffline ? '\n❌ อุปกรณ์สถานะ: ออฟไลน์' : '\n✅ อุปกรณ์สถานะ: ออนไลน์'}`
+                    text: `📊 สถานะ: ${motorData.state}\nเปลี่ยนล่าสุด: ${lastChangeStr}\nอัปเดตล่าสุด: ${lastUpdateStr}${motorData.isOffline ? '\n❌ อุปกรณ์สถานะ: ออฟไลน์' : '\n✅ อุปกรณ์สถานะ: ออนไลน์'}`
                 });
             } 
             else {
-                // กรณีพิมพ์คำสั่งไม่ถูก
-                client.replyMessage(replyToken, { 
+                await client.replyMessage(replyToken, { 
                     type: 'text', 
-                    text: `⚠️ ไม่เข้าใจคำสั่ง: "${text}"\nคำสั่งที่ใช้ได้คือ:\n- เปิด\n- ปิด\n- สถานะ` 
+                    text: `⚠️ ไม่เข้าใจคำสั่ง: "${text}"` 
                 });
             }
         }
-    });
-    res.sendStatus(200);
+    }
 });
 
 const PORT = process.env.PORT || 10000;
