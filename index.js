@@ -5,7 +5,7 @@ const app = express();
 app.use(express.json());
 
 const client = new Client({ 
-    channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
+    channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN, 
     channelSecret: process.env.CHANNEL_SECRET 
 });
 
@@ -19,10 +19,8 @@ let motorData = {
 let motorCommand = "OFF";
 let targetUserId = process.env.USER_ID || null;
 
-// ฟังก์ชันแจ้งเตือนเข้า LINE (บังคับเป็นเวลาไทย)
 async function notifyLine(message) {
     if (targetUserId) {
-        // เพิ่ม timeZone: 'Asia/Bangkok' เพื่อให้เป็นเวลาไทย
         const timeNow = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'medium' });
         try {
             await client.pushMessage(targetUserId, { 
@@ -33,7 +31,20 @@ async function notifyLine(message) {
     }
 }
 
-// Watchdog: ตรวจสอบสถานะการเชื่อมต่อ
+// ข้อความแนะนำการใช้งาน
+const guideMessage = `🤖 ยินดีต้อนรับสู่ระบบควบคุมมอเตอร์อัจฉริยะ
+
+บอทนี้ใช้สำหรับควบคุมและตรวจสอบสถานะมอเตอร์แบบ Real-time:
+
+📋 คำสั่งที่ใช้งานได้:
+- 【เปิด】 : สั่งเปิดมอเตอร์
+- 【ปิด】 : สั่งปิดมอเตอร์
+- 【สถานะ】 : ตรวจสอบสถานะมอเตอร์และการเชื่อมต่อ
+- 【แนะนำ】 : เรียกดูคู่มือการใช้งาน
+
+⚠️ ข้อควรระวัง: 
+หากได้รับแจ้งเตือนสถานะ "FAULT" โปรดเข้าตรวจสอบอุปกรณ์หน้างานทันที!`;
+
 setInterval(() => {
     const timeout = 30000;
     if (!motorData.isOffline && (Date.now() - motorData.lastUpdate > timeout)) {
@@ -42,7 +53,6 @@ setInterval(() => {
     }
 }, 5000);
 
-// API รับ Report จาก ESP32
 app.post('/api/motor/report', (req, res) => {
     const { state } = req.body;
     
@@ -70,7 +80,6 @@ app.get('/api/motor/command', (req, res) => {
     res.json({ command: motorCommand });
 });
 
-// Webhook สำหรับ LINE Bot
 app.post('/webhook', async (req, res) => {
     res.sendStatus(200);
     const events = req.body.events;
@@ -78,6 +87,12 @@ app.post('/webhook', async (req, res) => {
     for (const event of events) {
         if (event.source.userId) targetUserId = event.source.userId;
         
+        // 1. กรณีผู้ใช้กดเพิ่มเพื่อน (Welcome Message)
+        if (event.type === 'follow') {
+            await client.replyMessage(event.replyToken, { type: 'text', text: guideMessage });
+        }
+        
+        // 2. กรณีผู้ใช้ส่งข้อความ
         if (event.type === 'message' && event.message.text) {
             const text = event.message.text.trim();
             const replyToken = event.replyToken;
@@ -91,7 +106,6 @@ app.post('/webhook', async (req, res) => {
                 await client.replyMessage(replyToken, { type: 'text', text: "🛑 สั่งปิดมอเตอร์เรียบร้อย" });
             } 
             else if (text === "สถานะ") {
-                // บังคับ TimeZone เป็น Asia/Bangkok
                 const options = { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'medium' };
                 const lastChangeStr = new Date(motorData.lastChangeTime).toLocaleString('th-TH', options);
                 const lastUpdateStr = new Date(motorData.lastUpdate).toLocaleString('th-TH', options);
@@ -101,7 +115,7 @@ app.post('/webhook', async (req, res) => {
                 else if(motorData.state === "FAULT") motorDisplay = "⚠️ ขัดข้อง (FAULT)";
                 else motorDisplay = "🛑 หยุดทำงาน (STANDBY)";
 
-                let connectDisplay = motorData.isOffline ? "❌ ออฟไลน์ (ไม่เชื่อมต่อ)" : "✅ ออนไลน์ (เชื่อมต่อปกติ)";
+                let connectDisplay = motorData.isOffline ? "❌ ออฟไลน์" : "✅ ออนไลน์";
 
                 await client.replyMessage(replyToken, {
                     type: 'text', 
@@ -112,10 +126,13 @@ app.post('/webhook', async (req, res) => {
                           `อัปเดตล่าสุด: ${lastUpdateStr}`
                 });
             } 
+            else if (text === "แนะนำ" || text === "คู่มือ") {
+                await client.replyMessage(replyToken, { type: 'text', text: guideMessage });
+            }
             else {
                 await client.replyMessage(replyToken, { 
                     type: 'text', 
-                    text: `⚠️ ไม่เข้าใจคำสั่ง: "${text}"\nคำสั่งที่ใช้ได้คือ:\n- เปิด\n- ปิด\n- สถานะ` 
+                    text: `⚠️ ไม่เข้าใจคำสั่ง: "${text}"\nพิมพ์ "แนะนำ" เพื่อดูวิธีใช้งาน` 
                 });
             }
         }
