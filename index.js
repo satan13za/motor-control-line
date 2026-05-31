@@ -15,26 +15,34 @@ let targetUserId = null;
 // ========================= STATE =========================
 let motorData = {
     state: "STANDBY",
-    lastUpdate: Date.now(),
+    lastHeartbeat: Date.now(),
     isOffline: false
 };
 
 let motorCommand = "NONE";
-let lastCommandTime = 0;
 
-// ========================= TIMEOUT CHECK =========================
+// ========================= TIME (THAI) =========================
+function thaiTime() {
+    return new Date().toLocaleString("th-TH", {
+        timeZone: "Asia/Bangkok"
+    });
+}
+
+// ========================= OFFLINE CHECK =========================
 setInterval(() => {
 
-    const timeout = 15000;
+    const timeout = 30000; // 30 sec (กัน false offline)
 
-    if (!motorData.isOffline && (Date.now() - motorData.lastUpdate > timeout)) {
+    if (!motorData.isOffline &&
+        (Date.now() - motorData.lastHeartbeat > timeout)
+    ) {
 
         motorData.isOffline = true;
 
         if (targetUserId) {
             client.pushMessage(targetUserId, {
                 type: 'text',
-                text: "❌ ESP32 OFFLINE\nระบบไม่ตอบสนอง"
+                text: "❌ ESP32 OFFLINE\nไม่มีการตอบสนองเกิน 30 วินาที"
             });
         }
     }
@@ -74,16 +82,15 @@ app.post('/webhook', async (req, res) => {
             if (!systemReady) {
                 return client.replyMessage(event.replyToken, {
                     type: 'text',
-                    text: "❌ ระบบไม่พร้อม (ESP32 OFFLINE)"
+                    text: "❌ ระบบไม่พร้อมใช้งาน (ESP32 OFFLINE)"
                 });
             }
 
             motorCommand = "ON";
-            lastCommandTime = Date.now();
 
             return client.replyMessage(event.replyToken, {
                 type: 'text',
-                text: "⚙️ ส่งคำสั่งเปิด...\nรอผลจาก ESP32"
+                text: "⚙️ กำลังสั่งเปิดมอเตอร์...\nรอผลจาก ESP32"
             });
         }
 
@@ -93,16 +100,15 @@ app.post('/webhook', async (req, res) => {
             if (!systemReady) {
                 return client.replyMessage(event.replyToken, {
                     type: 'text',
-                    text: "❌ ระบบไม่พร้อม (ESP32 OFFLINE)"
+                    text: "❌ ระบบไม่พร้อมใช้งาน (ESP32 OFFLINE)"
                 });
             }
 
             motorCommand = "OFF";
-            lastCommandTime = Date.now();
 
             return client.replyMessage(event.replyToken, {
                 type: 'text',
-                text: "🛑 ส่งคำสั่งปิด...\nรอผลจาก ESP32"
+                text: "🛑 กำลังสั่งปิดมอเตอร์...\nรอผลจาก ESP32"
             });
         }
 
@@ -116,7 +122,7 @@ app.post('/webhook', async (req, res) => {
 
 มอเตอร์: ${motorData.state}
 ระบบ: ${motorData.isOffline ? "❌ OFFLINE" : "✅ ONLINE"}
-เวลา: ${new Date(motorData.lastUpdate).toLocaleString()}`
+เวลา: ${thaiTime()}`
             });
         }
 
@@ -139,16 +145,16 @@ app.post('/api/motor/report', (req, res) => {
     const oldState = motorData.state;
 
     motorData.state = state;
-    motorData.lastUpdate = Date.now();
+    motorData.lastHeartbeat = Date.now();
     motorData.isOffline = false;
 
-    // ========================= แจ้งเฉพาะเปลี่ยนจริง =========================
+    // แจ้งเฉพาะเปลี่ยนสถานะจริง
     if (targetUserId && state !== oldState) {
 
         let msg = "";
 
-        if (state === "RUNNING") msg = "⚙️ มอเตอร์ทำงานแล้ว (SUCCESS)";
-        else if (state === "STANDBY") msg = "🛑 มอเตอร์หยุดแล้ว (SUCCESS)";
+        if (state === "RUNNING") msg = "⚙️ มอเตอร์ทำงานแล้ว";
+        else if (state === "STANDBY") msg = "🛑 มอเตอร์หยุดแล้ว";
         else if (state === "FAULT") msg = "⚠️ FAULT DETECTED";
 
         client.pushMessage(targetUserId, {
@@ -167,7 +173,7 @@ app.get('/api/motor/command', (req, res) => {
 
     res.json({ command: cmd });
 
-    // ล้าง command หลังส่ง
+    // ล้าง command หลังส่ง (กันค้าง)
     if (cmd !== "NONE") {
         setTimeout(() => {
             motorCommand = "NONE";
