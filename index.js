@@ -15,15 +15,41 @@ let targetUserId = null;
 // ========================= STATE =========================
 let motorData = {
     state: "STANDBY",
-    lastUpdate: Date.now()
+    lastUpdate: Date.now(),
+    isOffline: false
 };
 
 let motorCommand = "NONE";
 
-// ========================= LOG =========================
-function log(msg) {
-    console.log("[SERVER]", msg);
-}
+// ========================= TIMEOUT CHECK =========================
+setInterval(() => {
+
+    const timeout = 15000; // 15 sec
+
+    if (!motorData.isOffline && (Date.now() - motorData.lastUpdate > timeout)) {
+
+        motorData.isOffline = true;
+
+        if (targetUserId) {
+            client.pushMessage(targetUserId, {
+                type: 'text',
+                text: "❌ ระบบออฟไลน์\nอุปกรณ์ ESP32 ไม่ตอบสนอง"
+            });
+        }
+    }
+
+}, 5000);
+
+// ========================= HELP MENU =========================
+const helpText =
+`🤖 ระบบควบคุมมอเตอร์
+
+📌 คำสั่ง:
+- เปิด → สั่งเริ่มมอเตอร์
+- ปิด → หยุดมอเตอร์
+- สถานะ → ดูสถานะระบบ
+
+⚠️ ระบบจะตรวจสอบ ESP32 อัตโนมัติ`;
 
 // ========================= WEBHOOK =========================
 app.post('/webhook', async (req, res) => {
@@ -34,56 +60,76 @@ app.post('/webhook', async (req, res) => {
 
     for (const event of events) {
 
-        log(JSON.stringify(event));
-
         if (!event || !event.type) continue;
 
-        if (event.source && event.source.userId) {
+        if (event.source?.userId) {
             targetUserId = event.source.userId;
         }
 
-        // ========================= MESSAGE =========================
-        if (event.type === 'message') {
+        if (event.type !== 'message') continue;
 
-            const text = (event.message.text || "").trim();
+        const text = (event.message.text || "").trim();
 
-            log("LINE MSG: " + text);
+        // ========================= OFFLINE BLOCK =========================
+        const systemReady = !motorData.isOffline;
 
-            if (text === "เปิด") {
+        // ========================= OPEN =========================
+        if (text === "เปิด") {
 
-                motorCommand = "ON";
-
-                await client.replyMessage(event.replyToken, {
+            if (!systemReady) {
+                return client.replyMessage(event.replyToken, {
                     type: 'text',
-                    text: "⚙️ สั่งเปิดมอเตอร์แล้ว"
+                    text: "❌ ระบบไม่พร้อมใช้งาน\nESP32 ยังไม่เชื่อมต่อ"
                 });
             }
 
-            else if (text === "ปิด") {
+            motorCommand = "ON";
 
-                motorCommand = "OFF";
+            return client.replyMessage(event.replyToken, {
+                type: 'text',
+                text: "⚙️ กำลังสั่งเปิดมอเตอร์...\nรอการตอบกลับจากระบบ"
+            });
+        }
 
-                await client.replyMessage(event.replyToken, {
+        // ========================= CLOSE =========================
+        else if (text === "ปิด") {
+
+            if (!systemReady) {
+                return client.replyMessage(event.replyToken, {
                     type: 'text',
-                    text: "🛑 สั่งปิดมอเตอร์แล้ว"
+                    text: "❌ ระบบไม่พร้อมใช้งาน\nESP32 ยังไม่เชื่อมต่อ"
                 });
             }
 
-            else if (text === "สถานะ") {
+            motorCommand = "OFF";
 
-                await client.replyMessage(event.replyToken, {
-                    type: 'text',
-                    text: `📊 สถานะ: ${motorData.state}`
-                });
-            }
+            return client.replyMessage(event.replyToken, {
+                type: 'text',
+                text: "🛑 กำลังสั่งปิดมอเตอร์...\nรอการตอบกลับจากระบบ"
+            });
+        }
 
-            else {
+        // ========================= STATUS =========================
+        else if (text === "สถานะ") {
 
-                await client.replyMessage(event.replyToken, {
-                    type: 'text',
-                    text: "❌ ไม่รู้จักคำสั่ง"
-                });
-            }
+            return client.replyMessage(event.replyToken, {
+                type: 'text',
+                text:
+`📊 สถานะระบบ
+
+มอเตอร์: ${motorData.state}
+ระบบ: ${motorData.isOffline ? "❌ OFFLINE" : "✅ ONLINE"}
+อัปเดตล่าสุด: ${new Date(motorData.lastUpdate).toLocaleString()}`
+            });
+        }
+
+        // ========================= HELP / UNKNOWN =========================
+        else {
+
+            return client.replyMessage(event.replyToken, {
+                type: 'text',
+                text: helpText
+            });
         }
     }
 });
@@ -93,9 +139,17 @@ app.post('/api/motor/report', (req, res) => {
 
     const { state } = req.body;
 
-    if (state) {
-        motorData.state = state;
-        motorData.lastUpdate = Date.now();
+    motorData.state = state;
+    motorData.lastUpdate = Date.now();
+    motorData.isOffline = false;
+
+    // แจ้งเมื่อสถานะเปลี่ยนจริง
+    if (targetUserId) {
+
+        client.pushMessage(targetUserId, {
+            type: 'text',
+            text: `📡 อัปเดตสถานะ: ${state}`
+        });
     }
 
     res.sendStatus(200);
@@ -115,5 +169,5 @@ app.get('/api/motor/command', (req, res) => {
 const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, () => {
-    log("RUNNING ON PORT " + PORT);
+    console.log("RUNNING ON PORT " + PORT);
 });
