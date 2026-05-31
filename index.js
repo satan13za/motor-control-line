@@ -155,7 +155,7 @@ app.post('/api/motor/report', (req, res) => {
 
         if (state === "RUNNING") msg = "⚙️ มอเตอร์ทำงานแล้ว";
         else if (state === "STANDBY") msg = "🛑 มอเตอร์หยุดแล้ว";
-        else if (state === "FAULT") msg = "⚠️ FAULT DETECTED";
+        else if (state === "FAULT") msg = "⚠️ FAULT DETECTED ระบบมีปัญหาเข้าดำเนินการตรวจสอบทันที";
 
         client.pushMessage(targetUserId, {
             type: 'text',
