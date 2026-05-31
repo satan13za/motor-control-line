@@ -4,170 +4,270 @@ const { Client } = require('@line/bot-sdk');
 const app = express();
 app.use(express.json());
 
-const client = new Client({ 
-    channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN, 
-    channelSecret: process.env.CHANNEL_SECRET 
+const client = new Client({
+    channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
+    channelSecret: process.env.CHANNEL_SECRET
 });
 
+let targetUserId = process.env.USER_ID || null;
+
+// =========================
+// สถานะมอเตอร์
+// =========================
 let motorData = {
-    state: "STANDBY",           
-    lastUpdate: Date.now(),      
-    lastChangeTime: Date.now(),  
-    isOffline: false             
+    state: "STANDBY",
+    lastUpdate: Date.now(),
+    isOffline: false
 };
 
 let motorCommand = "OFF";
-let targetUserId = process.env.USER_ID || null;
 
+// =========================
+// เวลาไทย
+// =========================
+function thaiTime() {
+    return new Date().toLocaleString('th-TH', {
+        timeZone: 'Asia/Bangkok',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
+// =========================
+// ส่งข้อความ LINE
+// =========================
 async function notifyLine(message) {
-    if (targetUserId) {
-        const timeNow = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'medium' });
-        try {
-            await client.pushMessage(targetUserId, { 
-                type: 'text', 
-                text: `🔔 [ระบบมอเตอร์ - ${timeNow}]:\n${message}` 
-            });
-        } catch (err) { console.error("Line Push Error:", err); }
+    if (!targetUserId) return;
+
+    try {
+        await client.pushMessage(targetUserId, {
+            type: 'text',
+            text:
+`📅 ${thaiTime()}
+
+${message}`
+        });
+    } catch (err) {
+        console.error("LINE ERROR:", err);
     }
 }
 
-// ฟังก์ชันตรวจสอบสถานะแบบ "สำเร็จปุ๊บ ตอบปั๊บ" (ไม่ต้องรอจนครบเวลา)
-async function verifyCommand(initialState, targetState, successMsg, failMsg) {
-    console.log(`Checking command: current=${initialState}, target=${targetState}`);
-    
-    // 1. เช็ค Offline
-    if (motorData.isOffline) {
-        notifyLine("❌ สั่งงานไม่สำเร็จ: อุปกรณ์ขาดการเชื่อมต่อ (Offline)");
-        return;
-    }
-
-    // 2. เช็คว่าสถานะเดิมตรงกับเป้าหมายไหม (ถ้าตรงกันคือไม่ต้องทำอะไร)
-    if (initialState === targetState) {
-        const action = (targetState === "RUNNING") ? "เปิด" : "ปิด";
-        notifyLine(`ℹ️ มอเตอร์${action}อยู่แล้วครับ ไม่ต้องทำรายการซ้ำ`);
-        return;
-    }
-
-    // 3. เริ่มวนลูปตรวจสอบทุก 2 วินาที (สูงสุด 10 รอบ = 20 วินาที)
-    // หากพบว่าสถานะเปลี่ยนแล้ว บอทจะตอบสำเร็จทันที
-    const maxRetries = 10;
-    for (let i = 0; i < maxRetries; i++) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        if (motorData.state === targetState) {
-            notifyLine(successMsg);
-            return; // สำเร็จแล้ว จบฟังก์ชันทันที
-        }
-        console.log(`Checking... attempt ${i + 1}/${maxRetries}`);
-    }
-    
-    // 4. ถ้าวนครบ 10 รอบแล้วยังไม่เปลี่ยน ให้แจ้ง Fail
-    notifyLine(failMsg);
-}
-
-const guideMessage = `🤖 ยินดีต้อนรับสู่ระบบควบคุมมอเตอร์อัจฉริยะ
-
-📋 คำสั่งที่ใช้งานได้:
-- 【เปิด】 : สั่งเปิดมอเตอร์
-- 【ปิด】 : สั่งปิดมอเตอร์
-- 【สถานะ】 : ตรวจสอบสถานะมอเตอร์และการเชื่อมต่อ
-- 【แนะนำ】 : เรียกดูคู่มือการใช้งาน
-
-⚠️ หากพบสภาวะ FAULT โปรดตรวจสอบอุปกรณ์ทันที!`;
-
-// Watchdog: ตรวจสอบสถานะการเชื่อมต่อ
+// =========================
+// ตรวจสอบ Offline
+// =========================
 setInterval(() => {
-    const timeout = 30000;
-    if (!motorData.isOffline && (Date.now() - motorData.lastUpdate > timeout)) {
+
+    const timeout = 30000; // 30 วินาที
+
+    if (
+        !motorData.isOffline &&
+        (Date.now() - motorData.lastUpdate > timeout)
+    ) {
+
         motorData.isOffline = true;
-        notifyLine("❌ อุปกรณ์ขาดการเชื่อมต่อ! (ไม่ได้รับข้อมูลเกิน 30 วินาที)");
+
+        notifyLine(
+`❌ แจ้งเตือนระบบ
+
+อุปกรณ์ขาดการเชื่อมต่อ
+ไม่ได้รับข้อมูลเกิน 30 วินาที`
+        );
     }
+
 }, 5000);
 
-// API รับ Report จาก ESP32
+// =========================
+// API รับสถานะจาก ESP32
+// =========================
 app.post('/api/motor/report', (req, res) => {
+
     const { state } = req.body;
-    
+
+    // กลับมาออนไลน์
     if (motorData.isOffline) {
-        motorData.isOffline = false; 
-        notifyLine("✅ อุปกรณ์กลับมาออนไลน์และเชื่อมต่อปกติแล้ว");
+
+        motorData.isOffline = false;
+
+        notifyLine(
+`✅ ระบบกลับมาออนไลน์แล้ว
+
+อุปกรณ์เชื่อมต่อปกติ`
+        );
     }
 
+    // ถ้าสถานะเปลี่ยน
     if (state !== motorData.state) {
-        motorData.state = state;
-        motorData.lastChangeTime = Date.now();
 
-        if (state === "FAULT") {
-            notifyLine("⚠️ แจ้งเตือน: พบสภาวะ FAULT! โปรดเข้าตรวจสอบอุปกรณ์ทันที");
-        } else {
-            notifyLine(`สถานะการทำงานเปลี่ยนเป็น: ${state}`);
+        motorData.state = state;
+
+        // =========================
+        // แจ้งเตือนตามสถานะ
+        // =========================
+
+        if (state === "RUNNING") {
+
+            notifyLine(
+`⚙️ มอเตอร์เริ่มทำงานแล้ว
+
+สถานะ: RUNNING`
+            );
+
+        } else if (state === "STANDBY") {
+
+            notifyLine(
+`🛑 มอเตอร์หยุดทำงานแล้ว
+
+สถานะ: STANDBY`
+            );
+
+        } else if (state === "FAULT") {
+
+            notifyLine(
+`⚠️ พบความผิดปกติของระบบ
+
+สถานะ: FAULT
+กรุณาตรวจสอบอุปกรณ์ทันที`
+            );
         }
     }
 
     motorData.lastUpdate = Date.now();
+
     res.sendStatus(200);
 });
 
+// =========================
+// ESP32 ดึงคำสั่ง
+// =========================
 app.get('/api/motor/command', (req, res) => {
     res.json({ command: motorCommand });
 });
 
+// =========================
+// LINE WEBHOOK
+// =========================
 app.post('/webhook', async (req, res) => {
+
     res.sendStatus(200);
+
     const events = req.body.events;
-    
+
     for (const event of events) {
-        if (event.source.userId) targetUserId = event.source.userId;
-        
-        if (event.type === 'follow') {
-            await client.replyMessage(event.replyToken, { type: 'text', text: guideMessage });
+
+        // จำ USER ID
+        if (event.source.userId) {
+            targetUserId = event.source.userId;
         }
-        
-        if (event.type === 'message' && event.message.text) {
+
+        // เพิ่มเพื่อน
+        if (event.type === 'follow') {
+
+            await client.replyMessage(event.replyToken, {
+                type: 'text',
+                text:
+`🤖 ระบบควบคุมมอเตอร์พร้อมใช้งาน
+
+คำสั่ง:
+เปิด
+ปิด
+สถานะ`
+            });
+        }
+
+        // รับข้อความ
+        if (
+            event.type === 'message' &&
+            event.message.type === 'text'
+        ) {
+
             const text = event.message.text.trim();
-            const replyToken = event.replyToken;
 
+            // =========================
+            // เปิดมอเตอร์
+            // =========================
             if (text === "เปิด") {
-                const currentState = motorData.state; 
+
                 motorCommand = "ON";
-                await client.replyMessage(replyToken, { type: 'text', text: "⏳ กำลังส่งคำสั่งเปิดมอเตอร์..." });
-                verifyCommand(currentState, "RUNNING", "✅ มอเตอร์เปิดทำงานเรียบร้อย", "❌ แจ้งเตือน: เปิดมอเตอร์ไม่สำเร็จ");
-            } 
-            else if (text === "ปิด") {
-                const currentState = motorData.state;
-                motorCommand = "OFF";
-                await client.replyMessage(replyToken, { type: 'text', text: "⏳ กำลังส่งคำสั่งปิดมอเตอร์..." });
-                verifyCommand(currentState, "STANDBY", "🛑 มอเตอร์ปิดทำงานเรียบร้อย", "❌ แจ้งเตือน: ปิดมอเตอร์ไม่สำเร็จ");
-            } 
-            else if (text === "สถานะ") {
-                const options = { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'medium' };
-                const lastChangeStr = new Date(motorData.lastChangeTime).toLocaleString('th-TH', options);
-                const lastUpdateStr = new Date(motorData.lastUpdate).toLocaleString('th-TH', options);
-                
-                let motorDisplay = "";
-                if(motorData.state === "RUNNING") motorDisplay = "⚙️ กำลังทำงาน (ON)";
-                else if(motorData.state === "FAULT") motorDisplay = "⚠️ ขัดข้อง (FAULT)";
-                else motorDisplay = "🛑 หยุดทำงาน (STANDBY)";
 
-                let connectDisplay = motorData.isOffline 
-                    ? "❌ อุปกรณ์ออฟไลน์ (ไม่มีสัญญาณ)" 
-                    : "✅ พร้อมใช้งาน (ออนไลน์ปกติ)";
-
-                await client.replyMessage(replyToken, {
-                    type: 'text', 
-                    text: `📊 รายงานสถานะระบบ\n\n` +
-                          `มอเตอร์: ${motorDisplay}\n` +
-                          `การเชื่อมต่อ: ${connectDisplay}\n\n` +
-                          `เปลี่ยนสถานะเมื่อ: ${lastChangeStr}\n` +
-                          `อัปเดตล่าสุด: ${lastUpdateStr}`
+                await client.replyMessage(event.replyToken, {
+                    type: 'text',
+                    text:
+`✅ ส่งคำสั่งเปิดมอเตอร์แล้ว`
                 });
-            } 
-            else if (text === "แนะนำ" || text === "คู่มือ") {
-                await client.replyMessage(replyToken, { type: 'text', text: guideMessage });
+
+                notifyLine(
+`🟢 มีการสั่งเปิดมอเตอร์
+
+คำสั่งถูกส่งไปยังอุปกรณ์แล้ว`
+                );
+            }
+
+            // =========================
+            // ปิดมอเตอร์
+            // =========================
+            else if (text === "ปิด") {
+
+                motorCommand = "OFF";
+
+                await client.replyMessage(event.replyToken, {
+                    type: 'text',
+                    text:
+`✅ ส่งคำสั่งปิดมอเตอร์แล้ว`
+                });
+
+                notifyLine(
+`🔴 มีการสั่งปิดมอเตอร์
+
+คำสั่งถูกส่งไปยังอุปกรณ์แล้ว`
+                );
+            }
+
+            // =========================
+            // ดูสถานะ
+            // =========================
+            else if (text === "สถานะ") {
+
+                let motorStatus = "";
+
+                if (motorData.state === "RUNNING") {
+                    motorStatus = "⚙️ RUNNING";
+                }
+                else if (motorData.state === "FAULT") {
+                    motorStatus = "⚠️ FAULT";
+                }
+                else {
+                    motorStatus = "🛑 STANDBY";
+                }
+
+                let onlineStatus = motorData.isOffline
+                    ? "❌ OFFLINE"
+                    : "✅ ONLINE";
+
+                await client.replyMessage(event.replyToken, {
+                    type: 'text',
+                    text:
+`📊 สถานะระบบ
+
+มอเตอร์: ${motorStatus}
+การเชื่อมต่อ: ${onlineStatus}
+
+อัปเดตล่าสุด:
+${thaiTime()}`
+                });
             }
         }
     }
 });
 
+// =========================
+// START SERVER
+// =========================
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+});
