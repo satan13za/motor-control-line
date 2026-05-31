@@ -26,6 +26,7 @@ let motorCommand = "OFF";
 // เวลาไทย
 // =========================
 function thaiTime() {
+
     return new Date().toLocaleString('th-TH', {
         timeZone: 'Asia/Bangkok',
         year: 'numeric',
@@ -35,6 +36,7 @@ function thaiTime() {
         minute: '2-digit',
         second: '2-digit'
     });
+
 }
 
 // =========================
@@ -159,42 +161,6 @@ app.get('/api/motor/command', (req, res) => {
 });
 
 // =========================
-// ตรวจสอบผลการทำงาน
-// =========================
-async function verifyMotor(targetState, successText, failText) {
-
-    const maxCheck = 10;
-
-    for (let i = 0; i < maxCheck; i++) {
-
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-        // Offline
-        if (motorData.isOffline) {
-
-            await notifyLine(
-`❌ อุปกรณ์ออฟไลน์
-
-ไม่สามารถตรวจสอบสถานะได้`
-            );
-
-            return;
-        }
-
-        // สำเร็จ
-        if (motorData.state === targetState) {
-
-            await notifyLine(successText);
-
-            return;
-        }
-    }
-
-    // ไม่สำเร็จ
-    await notifyLine(failText);
-}
-
-// =========================
 // LINE WEBHOOK
 // =========================
 app.post('/webhook', async (req, res) => {
@@ -205,6 +171,7 @@ app.post('/webhook', async (req, res) => {
 
     for (const event of events) {
 
+        // จำ USER ID
         if (event.source.userId) {
             targetUserId = event.source.userId;
         }
@@ -258,23 +225,6 @@ app.post('/webhook', async (req, res) => {
                     text:
 `⏳ กำลังส่งคำสั่งเปิดมอเตอร์...`
                 });
-
-                notifyLine(
-`🟢 มีการสั่งเปิดมอเตอร์
-
-ระบบกำลังตรวจสอบการทำงาน...`
-                );
-
-                // ตรวจสอบผล
-                verifyMotor(
-                    "RUNNING",
-`✅ มอเตอร์เปิดทำงานสำเร็จ
-
-สถานะปัจจุบัน: RUNNING`,
-`❌ เปิดมอเตอร์ไม่สำเร็จ
-
-กรุณาตรวจสอบอุปกรณ์`
-                );
             }
 
             // =========================
@@ -301,23 +251,6 @@ app.post('/webhook', async (req, res) => {
                     text:
 `⏳ กำลังส่งคำสั่งปิดมอเตอร์...`
                 });
-
-                notifyLine(
-`🔴 มีการสั่งปิดมอเตอร์
-
-ระบบกำลังตรวจสอบการทำงาน...`
-                );
-
-                // ตรวจสอบผล
-                verifyMotor(
-                    "STANDBY",
-`🛑 มอเตอร์หยุดทำงานสำเร็จ
-
-สถานะปัจจุบัน: STANDBY`,
-`❌ ปิดมอเตอร์ไม่สำเร็จ
-
-กรุณาตรวจสอบอุปกรณ์`
-                );
             }
 
             // =========================
