@@ -20,7 +20,30 @@ let motorData = {
     isOffline: false
 };
 
-let motorCommand = "OFF";
+// เริ่มต้นเป็น NONE
+let motorCommand = "NONE";
+
+// =========================
+// คู่มือ
+// =========================
+const guideMessage =
+`🤖 ระบบควบคุมมอเตอร์
+
+📌 คำสั่งที่ใช้งานได้
+
+🟢 เปิด
+→ สั่งเปิดมอเตอร์
+
+🔴 ปิด
+→ สั่งหยุดมอเตอร์
+
+📊 สถานะ
+→ ตรวจสอบสถานะระบบ
+
+⚠️ ระบบจะแจ้งเตือนอัตโนมัติเมื่อ:
+- อุปกรณ์ Offline
+- เกิด FAULT
+- มอเตอร์เริ่ม/หยุดทำงาน`;
 
 // =========================
 // เวลาไทย
@@ -154,9 +177,16 @@ app.post('/api/motor/report', (req, res) => {
 // =========================
 app.get('/api/motor/command', (req, res) => {
 
+    // เก็บคำสั่งปัจจุบัน
+    const currentCommand = motorCommand;
+
+    // ส่งกลับให้ ESP32
     res.json({
-        command: motorCommand
+        command: currentCommand
     });
+
+    // ล้างคำสั่งหลังส่ง
+    motorCommand = "NONE";
 
 });
 
@@ -181,13 +211,7 @@ app.post('/webhook', async (req, res) => {
 
             await client.replyMessage(event.replyToken, {
                 type: 'text',
-                text:
-`🤖 ระบบควบคุมมอเตอร์พร้อมใช้งาน
-
-คำสั่ง:
-เปิด
-ปิด
-สถานะ`
+                text: guideMessage
             });
         }
 
@@ -285,6 +309,21 @@ app.post('/webhook', async (req, res) => {
 อัปเดตล่าสุด:
 ${thaiTime()}`
                 });
+            }
+
+            // =========================
+            // คำสั่งอื่น
+            // =========================
+            else {
+
+                await client.replyMessage(event.replyToken, {
+                    type: 'text',
+                    text:
+`❌ ไม่พบคำสั่งที่พิมพ์
+
+${guideMessage}`
+                });
+
             }
         }
     }
