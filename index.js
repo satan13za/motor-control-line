@@ -134,10 +134,6 @@ app.post('/api/motor/report', (req, res) => {
 
         motorData.state = state;
 
-        // =========================
-        // แจ้งสถานะมอเตอร์
-        // =========================
-
         if (state === "RUNNING") {
 
             notifyLine(
@@ -177,10 +173,8 @@ app.post('/api/motor/report', (req, res) => {
 // =========================
 app.get('/api/motor/command', (req, res) => {
 
-    // เก็บคำสั่งปัจจุบัน
     const currentCommand = motorCommand;
 
-    // ส่งกลับให้ ESP32
     res.json({
         command: currentCommand
     });
@@ -230,6 +224,21 @@ app.post('/webhook', async (req, res) => {
             // =========================
             if (text === "เปิด") {
 
+                // ตรวจสอบออนไลน์
+                if (motorData.isOffline) {
+
+                    await client.replyMessage(event.replyToken, {
+                        type: 'text',
+                        text:
+`❌ ระบบไม่พร้อมใช้งาน
+
+อุปกรณ์ออฟไลน์
+ไม่สามารถสั่งเปิดมอเตอร์ได้`
+                    });
+
+                    continue;
+                }
+
                 // ถ้าเปิดอยู่แล้ว
                 if (motorData.state === "RUNNING") {
 
@@ -255,6 +264,21 @@ app.post('/webhook', async (req, res) => {
             // ปิดมอเตอร์
             // =========================
             else if (text === "ปิด") {
+
+                // ตรวจสอบออนไลน์
+                if (motorData.isOffline) {
+
+                    await client.replyMessage(event.replyToken, {
+                        type: 'text',
+                        text:
+`❌ ระบบไม่พร้อมใช้งาน
+
+อุปกรณ์ออฟไลน์
+ไม่สามารถสั่งปิดมอเตอร์ได้`
+                    });
+
+                    continue;
+                }
 
                 // ถ้าปิดอยู่แล้ว
                 if (motorData.state === "STANDBY") {
