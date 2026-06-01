@@ -49,12 +49,10 @@ const User = mongoose.model("User", userSchema);
 
 async function getUser(userId) {
     let user = await User.findOne({ userId });
-
     if (!user) {
         user = await User.create({ userId });
         console.log("NEW USER:", userId);
     }
-
     return user;
 }
 
@@ -66,7 +64,7 @@ let motorData = {
     faultCode: null
 };
 
-// ================= COMMAND SYSTEM (QUEUE) =================
+// ================= COMMAND QUEUE =================
 let commandQueue = [];
 
 // ================= ONLINE CHECK =================
@@ -78,45 +76,78 @@ function isOnline() {
 
 // ================= WATCHDOG =================
 setInterval(() => {
-
     const timeout = 30000;
 
-    if (motorData.lastHeartbeat !== 0 &&
-        Date.now() - motorData.lastHeartbeat > timeout) {
-
+    if (
+        motorData.lastHeartbeat !== 0 &&
+        Date.now() - motorData.lastHeartbeat > timeout
+    ) {
         motorData.state = "OFFLINE";
         motorData.fault = true;
         motorData.faultCode = "WATCHDOG_TIMEOUT";
     }
-
 }, 5000);
 
-// ================= INTRO =================
+// ================= 🧠 SMART INTRO (THAI AI STYLE) =================
 function introMessage(isAdmin) {
-    return `👋 MOTOR CONTROL SYSTEM
+    return `🤖 สวัสดีครับ ยินดีต้อนรับสู่ระบบควบคุมมอเตอร์อัจฉริยะ
 
-📡 ESP32 Real-time Control
-⚙️ STATUS / ON / OFF ${isAdmin ? '(ADMIN)' : ''}
+━━━━━━━━━━━━━━━━━━━━
+📡 ระบบ: MOTOR CONTROL SYSTEM (IoT + LINE)
+⚙️ ควบคุม ESP32 แบบ Real-time
+━━━━━━━━━━━━━━━━━━━━
 
-🕒 ${getThaiTime()}`;
+🧠 ฟังก์ชันระบบ
+✔ เปิด / ปิดมอเตอร์
+✔ ตรวจสอบ ONLINE / OFFLINE
+✔ ตรวจจับ Fault อัตโนมัติ
+✔ Watchdog ป้องกันระบบค้าง
+✔ Command Queue ป้องกันคำสั่งหลุด
+
+━━━━━━━━━━━━━━━━━━━━
+📊 คำสั่งใช้งาน
+👉 เปิด
+👉 ปิด
+👉 สถานะ
+${isAdmin ? "👉 admin (เมนูผู้ดูแล)\n👉 /users /approve /remove" : ""}
+
+━━━━━━━━━━━━━━━━━━━━
+📡 สถานะปัจจุบัน
+⚙️ ${motorData.state}
+📶 ${isOnline() ? "ONLINE ✅" : "OFFLINE ❌"}
+⚠️ Fault: ${motorData.fault ? "YES ❌" : "NO ✅"}
+🧾 Code: ${motorData.faultCode || "NORMAL"}
+
+🕒 ${getThaiTime()}
+
+💡 พิมพ์ “เปิด” หรือ “ปิด” เพื่อควบคุม`;
 }
 
 // ================= ADMIN MENU =================
 function adminMenu() {
     return `👑 ADMIN MENU
 
+━━━━━━━━━━━━━━━━━━━━
 👉 สถานะ
 👉 เปิด
 👉 ปิด
 
-👥 /users
-👥 /approve ID
-👥 /remove ID`;
+👥 USER CONTROL
+👉 /users
+👉 /approve ID
+👉 /remove ID
+
+━━━━━━━━━━━━━━━━━━━━
+📡 SYSTEM ACTIVE
+✔ Queue Enabled
+✔ Watchdog Enabled
+✔ Real-time ESP32 Control
+
+🕒 ${getThaiTime()}`;
 }
 
 // ================= ESP32 REPORT =================
 app.post('/api/motor/report', (req, res) => {
-
     const { state, faultCode } = req.body;
 
     if (state) {
@@ -181,7 +212,7 @@ app.post('/webhook', async (req, res) => {
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ไม่มีสิทธิ์"
+                    text: "❌ ไม่มีสิทธิ์เข้าถึง"
                 });
             }
 
@@ -220,7 +251,7 @@ app.post('/webhook', async (req, res) => {
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: `⚙️ ส่งคำสั่ง ON แล้ว`
+                text: "⚙️ ส่งคำสั่ง ON แล้ว"
             });
         }
 
@@ -238,7 +269,7 @@ app.post('/webhook', async (req, res) => {
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: `🛑 ส่งคำสั่ง OFF แล้ว`
+                text: "🛑 ส่งคำสั่ง OFF แล้ว"
             });
         }
 
