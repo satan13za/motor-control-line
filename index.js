@@ -91,16 +91,16 @@ function isOnline() {
         (Date.now() - motorData.lastHeartbeat) < 20000;
 }
 
-// ================= ADMIN MENU (THAI) =================
+// ================= ADMIN MENU =================
 function adminMenu() {
     return `👑 เมนูผู้ดูแลระบบ
 
 📌 คำสั่ง:
-- users = ดูผู้ใช้ทั้งหมด
-- approve = อนุมัติผู้ใช้
-- revoke = ยกเลิกผู้ใช้
-- promote = ตั้งแอดมิน
-- demote = ลดสิทธิ์แอดมิน
+users
+approve USER_ID
+revoke USER_ID
+promote USER_ID
+demote USER_ID
 
 ━━━━━━━━━━━━━━
 🕒 ${getThaiTime()}`;
@@ -145,11 +145,7 @@ app.post('/webhook', async (req, res) => {
 
         if (!user) return;
 
-        const role = (user?.role || "").toLowerCase().trim();
-
-        // ✅ FIX: admin ตรวจจาก ENV เท่านั้น (กัน user ปลอม role)
-        const isAdmin =
-            userId === SUPER_ADMIN_ID;
+        const isAdmin = userId === SUPER_ADMIN_ID;
 
         const canControl = isAdmin || user.approved === true;
 
@@ -166,6 +162,173 @@ app.post('/webhook', async (req, res) => {
             return client.replyMessage(event.replyToken, {
                 type: "text",
                 text: introMessage(user, isAdmin)
+            });
+        }
+
+        // ================= USERS =================
+        if (text === "users") {
+
+            if (!isAdmin) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่มีสิทธิ์"
+                });
+            }
+
+            const users = await User.find().sort({ createdAt: -1 });
+
+            if (!users.length) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "ไม่มีข้อมูลผู้ใช้"
+                });
+            }
+
+            let msg = "👥 รายชื่อผู้ใช้\n\n";
+
+            users.forEach((u, i) => {
+
+                const status =
+                    u.userId === SUPER_ADMIN_ID
+                        ? "👑 ADMIN"
+                        : u.approved
+                        ? "✅ APPROVED"
+                        : "⏳ WAIT";
+
+                msg += `${i + 1}. ${status}\n${u.userId}\n\n`;
+            });
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: msg.substring(0, 4900)
+            });
+        }
+
+        // ================= APPROVE =================
+        if (text.startsWith("approve ")) {
+
+            if (!isAdmin) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่มีสิทธิ์"
+                });
+            }
+
+            const targetId = text.replace("approve ", "").trim();
+
+            const target = await User.findOne({ userId: targetId });
+
+            if (!target) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่พบ USER ID"
+                });
+            }
+
+            target.approved = true;
+            await target.save();
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: "✅ อนุมัติผู้ใช้แล้ว"
+            });
+        }
+
+        // ================= REVOKE =================
+        if (text.startsWith("revoke ")) {
+
+            if (!isAdmin) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่มีสิทธิ์"
+                });
+            }
+
+            const targetId = text.replace("revoke ", "").trim();
+
+            const target = await User.findOne({ userId: targetId });
+
+            if (!target) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่พบ USER ID"
+                });
+            }
+
+            target.approved = false;
+
+            if (target.role === "admin") {
+                target.role = "user";
+            }
+
+            await target.save();
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: "🛑 ยกเลิกสิทธิ์แล้ว"
+            });
+        }
+
+        // ================= PROMOTE =================
+        if (text.startsWith("promote ")) {
+
+            if (!isAdmin) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่มีสิทธิ์"
+                });
+            }
+
+            const targetId = text.replace("promote ", "").trim();
+
+            const target = await User.findOne({ userId: targetId });
+
+            if (!target) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่พบ USER ID"
+                });
+            }
+
+            target.role = "admin";
+            target.approved = true;
+
+            await target.save();
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: "👑 ตั้งเป็น ADMIN แล้ว"
+            });
+        }
+
+        // ================= DEMOTE =================
+        if (text.startsWith("demote ")) {
+
+            if (!isAdmin) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่มีสิทธิ์"
+                });
+            }
+
+            const targetId = text.replace("demote ", "").trim();
+
+            const target = await User.findOne({ userId: targetId });
+
+            if (!target) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่พบ USER ID"
+                });
+            }
+
+            target.role = "user";
+
+            await target.save();
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: "🛑 ลดสิทธิ์ ADMIN แล้ว"
             });
         }
 
