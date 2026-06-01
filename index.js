@@ -23,7 +23,7 @@ function logSystem(message) {
     console.log(`[${getThaiTime()}] ${message}`);
 }
 
-// ================= ENV CHECK =================
+// ================= ENV =================
 const MONGO_URI = process.env.MONGO_URL;
 const CHANNEL_ACCESS_TOKEN = process.env.CHANNEL_ACCESS_TOKEN;
 const CHANNEL_SECRET = process.env.CHANNEL_SECRET;
@@ -43,9 +43,10 @@ if (MONGO_URI) {
         .then(() => console.log("MongoDB Connected"))
         .catch(err => console.log("MongoDB Error:", err));
 } else {
-    console.log("❌ MONGO_URL is missing in Render ENV");
+    console.log("❌ MONGO_URL is missing");
 }
 
+// ================= DB =================
 const userSchema = new mongoose.Schema({
     userId: String,
     role: { type: String, default: "user" },
@@ -54,7 +55,6 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model("User", userSchema);
 
-// auto register user
 async function getUser(userId) {
     let user = await User.findOne({ userId });
 
@@ -89,7 +89,7 @@ setInterval(() => {
 
         if (ADMIN_ID) {
             client.pushMessage(ADMIN_ID, {
-                type: 'text',
+                type: "text",
                 text: `❌ ESP32 OFFLINE\n🕒 ${getThaiTime()}`
             }).catch(() => {});
         }
@@ -97,7 +97,7 @@ setInterval(() => {
 
 }, 5000);
 
-// ================= REPORT =================
+// ================= REPORT (ESP32) =================
 app.post('/api/motor/report', (req, res) => {
 
     const { state } = req.body;
@@ -112,7 +112,7 @@ app.post('/api/motor/report', (req, res) => {
     res.sendStatus(200);
 });
 
-// ================= COMMAND =================
+// ================= COMMAND (ESP32) =================
 app.get('/api/motor/command', (req, res) => {
 
     const cmd = motorCommand;
@@ -133,7 +133,7 @@ function helpMessage(role) {
 📊 สถานะ = ดูระบบ
 
 ${role === "admin"
-? "🔐 ADMIN:\n👉 เปิด\n👉 ปิด\n👉 /setadmin"
+? "🔐 ADMIN:\n👉 เปิด\n👉 ปิด"
 : "🔒 USER (ดูได้อย่างเดียว)"}
 
 🕒 ${getThaiTime()}
@@ -162,6 +162,7 @@ app.post('/webhook', async (req, res) => {
                 text:
 `📊 STATUS
 ⚙️ ${motorData.state}
+📡 ${motorData.isOffline ? "OFFLINE ❌" : "ONLINE ✅"}
 👤 Role: ${user.role}
 🕒 ${getThaiTime()}`
             });
@@ -169,10 +170,21 @@ app.post('/webhook', async (req, res) => {
 
         // ================= OPEN =================
         if (text === "เปิด") {
+
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
                     text: "❌ ไม่มีสิทธิ์"
+                });
+            }
+
+            if (motorData.isOffline) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text:
+`⚠️ เปิดไม่ได้
+❌ ESP32 OFFLINE
+🕒 ${getThaiTime()}`
                 });
             }
 
@@ -180,12 +192,16 @@ app.post('/webhook', async (req, res) => {
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: "⚙️ เปิดแล้ว"
+                text:
+`⚙️ สั่งเปิดแล้ว
+📡 ESP32 ONLINE
+🕒 ${getThaiTime()}`
             });
         }
 
         // ================= CLOSE =================
         if (text === "ปิด") {
+
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
@@ -193,11 +209,24 @@ app.post('/webhook', async (req, res) => {
                 });
             }
 
+            if (motorData.isOffline) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text:
+`⚠️ ปิดไม่ได้
+❌ ESP32 OFFLINE
+🕒 ${getThaiTime()}`
+                });
+            }
+
             motorCommand = "OFF";
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: "🛑 ปิดแล้ว"
+                text:
+`🛑 สั่งปิดแล้ว
+📡 ESP32 ONLINE
+🕒 ${getThaiTime()}`
             });
         }
 
