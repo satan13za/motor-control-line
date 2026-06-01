@@ -60,8 +60,10 @@ async function getUser(userId) {
         role: "user",
         approved: false
     });
+} else {
+    // กัน role หาย / null
+    if (!user.role) user.role = "user";
 }
-
     return user;
 }
 
@@ -191,10 +193,14 @@ app.post('/webhook', async (req, res) => {
 
         const user = await getUser(userId);
 
-        const isSuperAdmin =
-    user.role === "admin" ||
+       const role = (user?.role || "").toLowerCase().trim();
+
+const isSuperAdmin =
+    role === "admin" ||
     userId === SUPER_ADMIN_ID;
-        const canControl = isSuperAdmin || user.approved;
+
+const canControl = isSuperAdmin || user.approved;
+
 
         // ================= START =================
         if (text === "เริ่ม") {
