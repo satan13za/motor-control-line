@@ -97,7 +97,7 @@ setInterval(() => {
 // ================= INTRO =================
 function introMessage(user) {
 
-    const isAdmin = user.userId === SUPER_ADMIN_ID;
+    const isAdmin = user.role === "admin";
     const canControl = isAdmin || user.approved;
 
     return `🤖 ระบบควบคุมมอเตอร์อัจฉริยะ
@@ -185,7 +185,7 @@ app.post('/webhook', async (req, res) => {
 
         const user = await getUser(userId);
 
-        const isSuperAdmin = userId === SUPER_ADMIN_ID;
+        const isSuperAdmin = user.role === "admin";
         const canControl = isSuperAdmin || user.approved;
 
         // ================= START =================
