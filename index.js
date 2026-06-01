@@ -43,7 +43,7 @@ if (MONGO_URL) {
     console.log("❌ MONGO_URL missing");
 }
 
-// ================= USER DB =================
+// ================= USER =================
 const userSchema = new mongoose.Schema({
     userId: String,
     role: { type: String, default: "user" },
@@ -66,18 +66,37 @@ async function getUser(userId) {
 // ================= MOTOR STATE =================
 let motorData = {
     state: "STANDBY",
-    lastHeartbeat: 0,   // 🔥 FIX: ห้ามเริ่มเป็น online
+    lastHeartbeat: 0,
     fault: false,
     faultCode: null
 };
 
 let motorCommand = "NONE";
 
-// ================= ONLINE CHECK (REAL) =================
+// ================= ONLINE CHECK =================
 function isOnline() {
     const timeout = 20000;
     if (motorData.lastHeartbeat === 0) return false;
     return (Date.now() - motorData.lastHeartbeat) < timeout;
+}
+
+// ================= INTRO MESSAGE =================
+function introMessage(isAdmin) {
+    return `👋 สวัสดี ยินดีต้อนรับสู่ MOTOR CONTROL SYSTEM
+
+📘 ระบบนี้ใช้สำหรับ:
+- ควบคุมมอเตอร์ผ่าน LINE
+- ตรวจสอบสถานะเครื่องจักรแบบ Real-time
+- แจ้งเตือน ESP32 Offline
+- แจ้งเตือน Fault (OVERLOAD / CONTACTOR)
+
+⚙️ คำสั่ง:
+👉 สถานะ
+👉 เปิด / ปิด ${isAdmin ? '(Admin)' : ''}
+
+📡 ระบบจะตรวจสอบ ESP32 และมอเตอร์อัตโนมัติ
+
+🕒 ${getThaiTime()}`;
 }
 
 // ================= WEBHOOK =================
@@ -97,6 +116,14 @@ app.post('/webhook', async (req, res) => {
 
         const online = isOnline();
 
+        // ================= INTRO =================
+        if (text === "เริ่ม" || text === "สวัสดี" || text === "menu") {
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: introMessage(isAdmin)
+            });
+        }
+
         // ================= STATUS =================
         if (text === "สถานะ") {
             return client.replyMessage(event.replyToken, {
@@ -106,7 +133,7 @@ app.post('/webhook', async (req, res) => {
 ⚙️ ${motorData.state}
 📡 ${online ? "ONLINE ✅" : "OFFLINE ❌"}
 ⚠️ Fault: ${motorData.fault ? "YES ❌" : "NO ✅"}
-🧾 Code: ${motorData.faultCode || "-"}
+🧾 Code: ${motorData.faultCode ? motorData.faultCode : "NORMAL (ไม่มี Fault)"}
 👤 Role: ${user.role}
 🕒 ${getThaiTime()}`
             });
@@ -125,7 +152,7 @@ app.post('/webhook', async (req, res) => {
             if (!online) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: `⚠️ ESP32 OFFLINE\nไม่สามารถสั่งงานได้`
+                    text: "⚠️ ESP32 OFFLINE\nไม่สามารถสั่งงานได้"
                 });
             }
 
@@ -150,7 +177,7 @@ app.post('/webhook', async (req, res) => {
             if (!online) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: `⚠️ ESP32 OFFLINE\nไม่สามารถสั่งงานได้`
+                    text: "⚠️ ESP32 OFFLINE\nไม่สามารถสั่งงานได้"
                 });
             }
 
@@ -167,9 +194,9 @@ app.post('/webhook', async (req, res) => {
             type: "text",
             text:
 `📘 MOTOR SYSTEM
-📊 สถานะ
-👉 เปิด / ปิด (admin)
-👉 สถานะ`
+👉 พิมพ์ "เริ่ม" เพื่อดูแนะนำระบบ
+👉 สถานะ
+👉 เปิด / ปิด (Admin)`
         });
     }
 });
