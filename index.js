@@ -24,7 +24,7 @@ const client = new Client({
     channelSecret: process.env.CHANNEL_SECRET || ""
 });
 
-// ================= MONGODB (FIX SAFE CONNECT) =================
+// ================= DB SAFE CONNECT =================
 let dbReady = false;
 
 if (process.env.MONGO_URL) {
@@ -35,41 +35,31 @@ if (process.env.MONGO_URL) {
         dbReady = true;
         console.log("MongoDB Connected");
     })
-    .catch(err => {
-        console.log("MongoDB Error:", err.message);
-        dbReady = false;
-    });
-} else {
-    console.log("❌ MONGO_URL missing (RUN WITHOUT DB MODE)");
+    .catch(err => console.log("MongoDB Error:", err.message));
 }
 
 // ================= USER MODEL =================
-const userSchema = new mongoose.Schema({
+const User = mongoose.model("User", new mongoose.Schema({
     userId: String,
     role: { type: String, default: "user" },
+    approved: { type: Boolean, default: false }, // 🔥 อนุมัติใช้งาน
     createdAt: { type: Date, default: Date.now }
-});
+}));
 
-const User = mongoose.model("User", userSchema);
+// ================= ADMIN คนเดียว =================
+const SUPER_ADMIN_ID = process.env.ADMIN_ID || "";
 
-// ================= SAFE USER GET (NO CRASH) =================
+// ================= GET USER SAFE =================
 async function getUser(userId) {
-    try {
-        if (!dbReady) {
-            return { userId, role: "user" };
-        }
+    if (!dbReady) return { userId, role: "user", approved: false };
 
-        let user = await User.findOne({ userId });
-        if (!user) user = await User.create({ userId });
-        return user;
+    let user = await User.findOne({ userId });
+    if (!user) user = await User.create({ userId });
 
-    } catch (err) {
-        console.log("DB ERROR getUser:", err.message);
-        return { userId, role: "user" };
-    }
+    return user;
 }
 
-// ================= MOTOR SAFE STATE =================
+// ================= MOTOR STATE =================
 let motorData = {
     state: "STOP",
     lastHeartbeat: 0,
@@ -77,19 +67,19 @@ let motorData = {
     faultCode: null
 };
 
-// ================= COMMAND SYSTEM =================
+// ================= COMMAND =================
 let motorCommand = {
     cmd: "NONE",
     timestamp: 0
 };
 
-// ================= ONLINE CHECK =================
+// ================= ONLINE =================
 function isOnline() {
     return motorData.lastHeartbeat !== 0 &&
         (Date.now() - motorData.lastHeartbeat) < 20000;
 }
 
-// ================= WATCHDOG (SAFE MODE) =================
+// ================= WATCHDOG =================
 setInterval(() => {
     const timeout = 30000;
 
@@ -104,72 +94,70 @@ setInterval(() => {
     }
 }, 5000);
 
-// ================= INTRO MESSAGE =================
-function introMessage(isAdmin) {
-    return `🤖 MOTOR CONTROL SYSTEM
+// ================= INTRO (ไทยเข้าใจง่าย) =================
+function introMessage(user) {
+
+    const isAdmin = user.userId === SUPER_ADMIN_ID;
+    const canControl = isAdmin || user.approved;
+
+    return `🤖 ระบบควบคุมมอเตอร์อัจฉริยะ
 
 ━━━━━━━━━━━━━━━━━━━━
-📡 ESP32 + LINE SYSTEM
-⚙️ Real-time Control
+📡 ESP32 + LINE CONTROL SYSTEM
+
+👤 สถานะผู้ใช้:
+- สิทธิ์: ${isAdmin ? "ผู้ดูแลระบบ (ADMIN)" : user.approved ? "ผู้ใช้งานที่อนุมัติแล้ว" : "รอการอนุมัติ"}
 
 ━━━━━━━━━━━━━━━━━━━━
-📊 COMMANDS
-👉 เริ่ม
-👉 สถานะ
-👉 เปิด
-👉 ปิด
-${isAdmin ? "👉 admin\n👉 users / promote / demote" : ""}
-
-━━━━━━━━━━━━━━━━━━━━
-📡 STATUS
+📊 สถานะเครื่อง:
 ⚙️ ${motorData.state}
 📶 ${isOnline() ? "ONLINE" : "OFFLINE"}
 ⚠️ Fault: ${motorData.fault ? "YES" : "NO"}
 
-🕒 ${getThaiTime()}`;
+━━━━━━━━━━━━━━━━━━━━
+📌 คำสั่งที่ใช้ได้:
+${!canControl ? "👉 สถานะ (ดูได้อย่างเดียว)" : "👉 เปิด / ปิด / สถานะ"}
+
+🕒 ${getThaiTime()}
+
+💡 พิมพ์ “สถานะ” เพื่อตรวจสอบระบบ`;
 }
 
 // ================= ADMIN MENU =================
 function adminMenu() {
-    return `👑 ADMIN MENU
+    return `👑 เมนูผู้ดูแลระบบ
 
 ━━━━━━━━━━━━━━━━━━━━
-👉 สถานะ
-👉 เปิด
-👉 ปิด
-👉 users
-👉 promote ID
-👉 demote ID
+👉 users (ดูผู้ใช้)
+👉 approve ID (อนุมัติ)
+👉 revoke ID (ยกเลิก)
+👉 promote ID (ตั้ง admin)
+👉 demote ID (ลดสิทธิ์)
 
-━━━━━━━━━━━━━━━━━━━━
-🧠 SYSTEM ACTIVE
-✔ Safe Mode ON
-✔ Watchdog ON
+⚠️ หมายเหตุ:
+มี admin ได้แค่ 1 คนเท่านั้น
 
 🕒 ${getThaiTime()}`;
 }
 
 // ================= ESP32 REPORT =================
 app.post('/api/motor/report', (req, res) => {
-    try {
-        const { state, faultCode } = req.body;
 
-        motorData.lastHeartbeat = Date.now();
+    const { state, faultCode } = req.body;
 
-        if (state) motorData.state = state;
+    motorData.lastHeartbeat = Date.now();
 
-        if (state === "FAULT") {
-            motorData.fault = true;
-            motorData.faultCode = faultCode || "UNKNOWN";
-        } else {
-            motorData.fault = false;
-            motorData.faultCode = null;
-        }
+    if (state) motorData.state = state;
 
-        res.sendStatus(200);
-    } catch (err) {
-        res.sendStatus(500);
+    if (state === "FAULT") {
+        motorData.fault = true;
+        motorData.faultCode = faultCode || "UNKNOWN";
+    } else {
+        motorData.fault = false;
+        motorData.faultCode = null;
     }
+
+    res.sendStatus(200);
 });
 
 // ================= ESP32 COMMAND =================
@@ -179,7 +167,6 @@ app.get('/api/motor/command', (req, res) => {
 
     if (motorCommand.timestamp !== 0 &&
         Date.now() - motorCommand.timestamp > 10000) {
-
         motorCommand = { cmd: "NONE", timestamp: 0 };
     }
 
@@ -204,34 +191,36 @@ app.post('/webhook', async (req, res) => {
         if (!userId || !text) continue;
 
         const user = await getUser(userId);
-        const isAdmin = user.role === "admin";
 
-        // ===== START =====
+        const isSuperAdmin = userId === SUPER_ADMIN_ID;
+        const canControl = isSuperAdmin || user.approved;
+
+        // ================= START =================
         if (text === "เริ่ม") {
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: introMessage(isAdmin)
+                text: introMessage(user)
             });
         }
 
-        // ===== STATUS =====
+        // ================= STATUS =================
         if (text === "สถานะ") {
             return client.replyMessage(event.replyToken, {
                 type: "text",
                 text:
-`📊 STATUS
+`📊 สถานะระบบ
 ⚙️ ${motorData.state}
 📶 ${isOnline() ? "ONLINE" : "OFFLINE"}
 ⚠️ Fault: ${motorData.fault ? "YES" : "NO"}`
             });
         }
 
-        // ===== ADMIN MENU =====
+        // ================= ADMIN MENU (SUPER ADMIN ONLY) =================
         if (text === "admin") {
-            if (!isAdmin) {
+            if (!isSuperAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ไม่มีสิทธิ์"
+                    text: "❌ ไม่มีสิทธิ์เข้าถึงเมนูผู้ดูแล"
                 });
             }
 
@@ -241,91 +230,99 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // ===== USERS =====
+        // ================= APPROVE USER =================
+        if (text.startsWith("approve ")) {
+
+            if (!isSuperAdmin) return;
+
+            const id = text.split(" ")[1];
+
+            await User.updateOne({ userId: id }, { approved: true });
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: `✅ อนุมัติผู้ใช้: ${id}`
+            });
+        }
+
+        // ================= REVOKE =================
+        if (text.startsWith("revoke ")) {
+
+            if (!isSuperAdmin) return;
+
+            const id = text.split(" ")[1];
+
+            await User.updateOne({ userId: id }, { approved: false });
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: `❌ ถอนสิทธิ์: ${id}`
+            });
+        }
+
+        // ================= USERS =================
         if (text === "users") {
-            if (!isAdmin || !dbReady) return;
+
+            if (!isSuperAdmin) return;
 
             const users = await User.find().limit(10);
 
             const list = users.map(u =>
-                `${u.userId} | ${u.role}`
+                `${u.userId} | ${u.approved ? "อนุมัติแล้ว" : "รออนุมัติ"}`
             ).join("\n");
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: `👥 USERS\n\n${list || "ไม่มีข้อมูล"}`
+                text: `👥 รายชื่อผู้ใช้\n\n${list}`
             });
         }
 
-        // ===== PROMOTE =====
-        if (text.startsWith("promote ")) {
-            if (!dbReady) return;
-
-            const id = text.split(" ")[1];
-            await User.updateOne({ userId: id }, { role: "admin" });
-
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: `✅ Promote ${id}`
-            });
-        }
-
-        // ===== DEMOTE =====
-        if (text.startsWith("demote ")) {
-            if (!dbReady) return;
-
-            const id = text.split(" ")[1];
-            await User.updateOne({ userId: id }, { role: "user" });
-
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: `⬇️ Demote ${id}`
-            });
-        }
-
-        // ===== OPEN =====
+        // ================= OPEN =================
         if (text === "เปิด") {
-            if (!isAdmin) {
+
+            if (!canControl) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ไม่มีสิทธิ์"
+                    text: "❌ ยังไม่ได้รับอนุมัติให้ควบคุมระบบ"
                 });
             }
 
-            motorCommand = {
-                cmd: "ON",
-                timestamp: Date.now()
-            };
+            if (!isOnline()) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "⚠️ ระบบ OFFLINE อยู่ ไม่สามารถสั่งเปิดได้"
+                });
+            }
+
+            motorCommand = { cmd: "ON", timestamp: Date.now() };
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: "⚙️ ส่ง ON แล้ว"
+                text: "⚙️ ส่งคำสั่งเปิดแล้ว"
             });
         }
 
-        // ===== CLOSE =====
+        // ================= CLOSE =================
         if (text === "ปิด") {
-            if (!isAdmin) {
+
+            if (!canControl) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ไม่มีสิทธิ์"
+                    text: "❌ ยังไม่ได้รับอนุมัติ"
                 });
             }
 
-            motorCommand = {
-                cmd: "OFF",
-                timestamp: Date.now()
-            };
+            motorCommand = { cmd: "OFF", timestamp: Date.now() };
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: "🛑 ส่ง OFF แล้ว"
+                text: "🛑 ส่งคำสั่งปิดแล้ว"
             });
         }
 
         return client.replyMessage(event.replyToken, {
             type: "text",
-            text: "พิมพ์ 'เริ่ม'"
+            text: "พิมพ์ 'เริ่ม' เพื่อใช้งานระบบ"
         });
     }
 });
