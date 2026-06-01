@@ -18,7 +18,7 @@ function getThaiTime() {
     });
 }
 
-// ================= LOG SYSTEM =================
+// ================= LOG =================
 function logSystem(message) {
     console.log(`[${getThaiTime()}] ${message}`);
 }
@@ -42,24 +42,23 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model("User", userSchema);
 
+// auto register user
 async function getUser(userId) {
     let user = await User.findOne({ userId });
 
     if (!user) {
         user = await User.create({ userId });
+        console.log("NEW USER:", userId);
     }
 
     return user;
 }
 
-let targetUserId = null;
-
 // ================= STATE =================
 let motorData = {
     state: "STANDBY",
     lastHeartbeat: Date.now(),
-    isOffline: false,
-    lastUpdateTime: getThaiTime()
+    isOffline: false
 };
 
 let motorCommand = "NONE";
@@ -74,16 +73,12 @@ setInterval(() => {
     ) {
         motorData.isOffline = true;
 
-        logSystem("ESP32 OFFLINE DETECTED");
+        logSystem("ESP32 OFFLINE");
 
-        if (targetUserId) {
-            client.pushMessage(targetUserId, {
-                type: 'text',
-                text:
-`❌ ESP32 OFFLINE
-🕒 ${getThaiTime()}`
-            });
-        }
+        client.pushMessage(process.env.ADMIN_ID, {
+            type: 'text',
+            text: `❌ ESP32 OFFLINE\n🕒 ${getThaiTime()}`
+        }).catch(()=>{});
     }
 
 }, 5000);
@@ -93,8 +88,6 @@ app.post('/api/motor/report', (req, res) => {
 
     const { state } = req.body;
     if (!state) return res.sendStatus(200);
-
-    const old = motorData.state;
 
     motorData.state = state;
     motorData.lastHeartbeat = Date.now();
@@ -112,8 +105,8 @@ app.get('/api/motor/command', (req, res) => {
 
     res.json({
         command: cmd,
-        time: getThaiTime(),
-        state: motorData.state
+        state: motorData.state,
+        time: getThaiTime()
     });
 
     if (cmd !== "NONE") motorCommand = "NONE";
@@ -121,18 +114,19 @@ app.get('/api/motor/command', (req, res) => {
 
 // ================= HELP =================
 function helpMessage(role) {
-    return `📘 SYSTEM MOTOR
+    return `📘 MOTOR SYSTEM
 
-⚙️ สถานะ
-👉 สถานะ = ดูระบบ
+📊 สถานะ = ดูระบบ
 
-${role === "admin" ? "🔐 คำสั่งแอดมิน\n👉 เปิด\n👉 ปิด" : "🔒 คุณเป็น USER"}
+${role === "admin"
+? "🔐 ADMIN:\n👉 เปิด\n👉 ปิด\n👉 /setadmin"
+: "🔒 USER (ดูได้อย่างเดียว)"}
 
 🕒 ${getThaiTime()}
 `;
 }
 
-// ================= WEBHOOK LINE =================
+// ================= WEBHOOK =================
 app.post('/webhook', async (req, res) => {
 
     res.sendStatus(200);
@@ -145,42 +139,107 @@ app.post('/webhook', async (req, res) => {
         const user = await getUser(userId);
         const isAdmin = user.role === "admin";
 
-        if (text === "เปิด") {
+        // ================= SET ADMIN =================
+        if (text?.startsWith("/setadmin")) {
 
-            if (!isAdmin)
+            if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
-                    type: 'text',
+                    type: "text",
+                    text: "❌ ไม่มีสิทธิ์ตั้ง admin"
+                });
+            }
+
+            const targetId = text.split(" ")[1];
+
+            const target = await User.findOne({ userId: targetId });
+
+            if (!target) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่พบ user นี้"
+                });
+            }
+
+            target.role = "admin";
+            await target.save();
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: `✅ ตั้ง admin แล้ว\n👤 ${targetId}`
+            });
+        }
+
+        // ================= UNSET ADMIN =================
+        if (text?.startsWith("/unsetadmin")) {
+
+            if (!isAdmin) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
                     text: "❌ ไม่มีสิทธิ์"
                 });
+            }
+
+            const targetId = text.split(" ")[1];
+
+            const target = await User.findOne({ userId: targetId });
+
+            if (!target) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่พบ user"
+                });
+            }
+
+            target.role = "user";
+            await target.save();
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: `🟡 ถอน admin แล้ว`
+            });
+        }
+
+        // ================= OPEN =================
+        if (text === "เปิด") {
+
+            if (!isAdmin) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่มีสิทธิ์"
+                });
+            }
 
             motorCommand = "ON";
 
             return client.replyMessage(event.replyToken, {
-                type: 'text',
+                type: "text",
                 text: "⚙️ เปิดแล้ว"
             });
         }
 
+        // ================= CLOSE =================
         if (text === "ปิด") {
 
-            if (!isAdmin)
+            if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
-                    type: 'text',
+                    type: "text",
                     text: "❌ ไม่มีสิทธิ์"
                 });
+            }
 
             motorCommand = "OFF";
 
             return client.replyMessage(event.replyToken, {
-                type: 'text',
+                type: "text",
                 text: "🛑 ปิดแล้ว"
             });
         }
 
+        // ================= STATUS =================
         if (text === "สถานะ") {
 
             return client.replyMessage(event.replyToken, {
-                type: 'text',
+                type: "text",
                 text:
 `📊 STATUS
 ⚙️ ${motorData.state}
@@ -189,8 +248,9 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
+        // ================= HELP =================
         return client.replyMessage(event.replyToken, {
-            type: 'text',
+            type: "text",
             text: helpMessage(user.role)
         });
     }
@@ -198,5 +258,5 @@ app.post('/webhook', async (req, res) => {
 
 // ================= START =================
 app.listen(10000, () => {
-    logSystem("SERVER STARTED ON PORT 10000");
+    logSystem("SERVER STARTED");
 });
