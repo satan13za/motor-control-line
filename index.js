@@ -24,17 +24,49 @@ const client = new Client({
     channelSecret: process.env.CHANNEL_SECRET || ""
 });
 
-// ================= MONGODB USER =================
-const User = mongoose.model("User", new mongoose.Schema({
+// ================= MONGODB (FIX SAFE CONNECT) =================
+let dbReady = false;
+
+if (process.env.MONGO_URL) {
+    mongoose.connect(process.env.MONGO_URL, {
+        serverSelectionTimeoutMS: 5000
+    })
+    .then(() => {
+        dbReady = true;
+        console.log("MongoDB Connected");
+    })
+    .catch(err => {
+        console.log("MongoDB Error:", err.message);
+        dbReady = false;
+    });
+} else {
+    console.log("❌ MONGO_URL missing (RUN WITHOUT DB MODE)");
+}
+
+// ================= USER MODEL =================
+const userSchema = new mongoose.Schema({
     userId: String,
     role: { type: String, default: "user" },
     createdAt: { type: Date, default: Date.now }
-}));
+});
 
+const User = mongoose.model("User", userSchema);
+
+// ================= SAFE USER GET (NO CRASH) =================
 async function getUser(userId) {
-    let user = await User.findOne({ userId });
-    if (!user) user = await User.create({ userId });
-    return user;
+    try {
+        if (!dbReady) {
+            return { userId, role: "user" };
+        }
+
+        let user = await User.findOne({ userId });
+        if (!user) user = await User.create({ userId });
+        return user;
+
+    } catch (err) {
+        console.log("DB ERROR getUser:", err.message);
+        return { userId, role: "user" };
+    }
 }
 
 // ================= MOTOR SAFE STATE =================
@@ -45,7 +77,7 @@ let motorData = {
     faultCode: null
 };
 
-// ================= COMMAND =================
+// ================= COMMAND SYSTEM =================
 let motorCommand = {
     cmd: "NONE",
     timestamp: 0
@@ -57,7 +89,7 @@ function isOnline() {
         (Date.now() - motorData.lastHeartbeat) < 20000;
 }
 
-// ================= WATCHDOG SAFETY =================
+// ================= WATCHDOG (SAFE MODE) =================
 setInterval(() => {
     const timeout = 30000;
 
@@ -77,8 +109,8 @@ function introMessage(isAdmin) {
     return `🤖 MOTOR CONTROL SYSTEM
 
 ━━━━━━━━━━━━━━━━━━━━
-📡 LINE + ESP32 REALTIME CONTROL
-⚙️ SYSTEM STATUS MONITOR
+📡 ESP32 + LINE SYSTEM
+⚙️ Real-time Control
 
 ━━━━━━━━━━━━━━━━━━━━
 📊 COMMANDS
@@ -86,7 +118,7 @@ function introMessage(isAdmin) {
 👉 สถานะ
 👉 เปิด
 👉 ปิด
-${isAdmin ? "👉 admin (menu)\n👉 users / promote / demote" : ""}
+${isAdmin ? "👉 admin\n👉 users / promote / demote" : ""}
 
 ━━━━━━━━━━━━━━━━━━━━
 📡 STATUS
@@ -94,9 +126,7 @@ ${isAdmin ? "👉 admin (menu)\n👉 users / promote / demote" : ""}
 📶 ${isOnline() ? "ONLINE" : "OFFLINE"}
 ⚠️ Fault: ${motorData.fault ? "YES" : "NO"}
 
-🕒 ${getThaiTime()}
-
-💡 พิมพ์ “เปิด” หรือ “ปิด”`;
+🕒 ${getThaiTime()}`;
 }
 
 // ================= ADMIN MENU =================
@@ -113,31 +143,33 @@ function adminMenu() {
 
 ━━━━━━━━━━━━━━━━━━━━
 🧠 SYSTEM ACTIVE
+✔ Safe Mode ON
 ✔ Watchdog ON
-✔ Safe STOP MODE
-✔ ACK READY
 
 🕒 ${getThaiTime()}`;
 }
 
 // ================= ESP32 REPORT =================
 app.post('/api/motor/report', (req, res) => {
+    try {
+        const { state, faultCode } = req.body;
 
-    const { state, faultCode } = req.body;
+        motorData.lastHeartbeat = Date.now();
 
-    motorData.lastHeartbeat = Date.now();
+        if (state) motorData.state = state;
 
-    if (state) motorData.state = state;
+        if (state === "FAULT") {
+            motorData.fault = true;
+            motorData.faultCode = faultCode || "UNKNOWN";
+        } else {
+            motorData.fault = false;
+            motorData.faultCode = null;
+        }
 
-    if (state === "FAULT") {
-        motorData.fault = true;
-        motorData.faultCode = faultCode || "UNKNOWN";
-    } else {
-        motorData.fault = false;
-        motorData.faultCode = null;
+        res.sendStatus(200);
+    } catch (err) {
+        res.sendStatus(500);
     }
-
-    res.sendStatus(200);
 });
 
 // ================= ESP32 COMMAND =================
@@ -174,7 +206,7 @@ app.post('/webhook', async (req, res) => {
         const user = await getUser(userId);
         const isAdmin = user.role === "admin";
 
-        // ================= START =================
+        // ===== START =====
         if (text === "เริ่ม") {
             return client.replyMessage(event.replyToken, {
                 type: "text",
@@ -182,7 +214,7 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // ================= STATUS =================
+        // ===== STATUS =====
         if (text === "สถานะ") {
             return client.replyMessage(event.replyToken, {
                 type: "text",
@@ -190,14 +222,12 @@ app.post('/webhook', async (req, res) => {
 `📊 STATUS
 ⚙️ ${motorData.state}
 📶 ${isOnline() ? "ONLINE" : "OFFLINE"}
-⚠️ Fault: ${motorData.fault ? "YES" : "NO"}
-🧾 Code: ${motorData.faultCode || "NORMAL"}`
+⚠️ Fault: ${motorData.fault ? "YES" : "NO"}`
             });
         }
 
-        // ================= ADMIN MENU =================
+        // ===== ADMIN MENU =====
         if (text === "admin") {
-
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
@@ -211,10 +241,9 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // ================= USERS =================
+        // ===== USERS =====
         if (text === "users") {
-
-            if (!isAdmin) return;
+            if (!isAdmin || !dbReady) return;
 
             const users = await User.find().limit(10);
 
@@ -228,35 +257,34 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // ================= PROMOTE =================
+        // ===== PROMOTE =====
         if (text.startsWith("promote ")) {
+            if (!dbReady) return;
 
             const id = text.split(" ")[1];
-
             await User.updateOne({ userId: id }, { role: "admin" });
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: `✅ Promote: ${id}`
+                text: `✅ Promote ${id}`
             });
         }
 
-        // ================= DEMOTE =================
+        // ===== DEMOTE =====
         if (text.startsWith("demote ")) {
+            if (!dbReady) return;
 
             const id = text.split(" ")[1];
-
             await User.updateOne({ userId: id }, { role: "user" });
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: `⬇️ Demote: ${id}`
+                text: `⬇️ Demote ${id}`
             });
         }
 
-        // ================= OPEN =================
+        // ===== OPEN =====
         if (text === "เปิด") {
-
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
@@ -271,13 +299,12 @@ app.post('/webhook', async (req, res) => {
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: "⚙️ ส่ง ON แล้ว (รอ ESP32)"
+                text: "⚙️ ส่ง ON แล้ว"
             });
         }
 
-        // ================= CLOSE =================
+        // ===== CLOSE =====
         if (text === "ปิด") {
-
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
@@ -292,13 +319,13 @@ app.post('/webhook', async (req, res) => {
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: "🛑 ส่ง OFF แล้ว (รอ ESP32)"
+                text: "🛑 ส่ง OFF แล้ว"
             });
         }
 
         return client.replyMessage(event.replyToken, {
             type: "text",
-            text: "พิมพ์ 'เริ่ม' เพื่อใช้งานระบบ"
+            text: "พิมพ์ 'เริ่ม'"
         });
     }
 });
