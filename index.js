@@ -43,7 +43,7 @@ let motorCommand = "NONE";
 // ================= OFFLINE CHECK =================
 setInterval(() => {
 
-    const timeout = 15000;
+    const timeout = 20000; // ปรับให้นิ่งขึ้น
 
     if (!motorData.isOffline &&
         Date.now() - motorData.lastHeartbeat > timeout
@@ -53,13 +53,17 @@ setInterval(() => {
         logSystem("ESP32 OFFLINE DETECTED");
 
         if (targetUserId) {
-            client.pushMessage(targetUserId, {
-                type: 'text',
-                text:
+            try {
+                client.pushMessage(targetUserId, {
+                    type: 'text',
+                    text:
 `❌ ESP32 OFFLINE
 🕒 ${getThaiTime()}
-⏱ ไม่มี heartbeat > 15 วินาที`
-            });
+⏱ ไม่มี heartbeat > 20 วินาที`
+                });
+            } catch (err) {
+                logSystem("Push Error: " + err.message);
+            }
         }
     }
 
@@ -88,13 +92,17 @@ app.post('/api/motor/report', (req, res) => {
         if (state === "STANDBY") msg = "🛑 มอเตอร์หยุดแล้ว";
         if (state === "FAULT") msg = "⚠️ FAULT";
 
-        client.pushMessage(targetUserId, {
-            type: 'text',
-            text:
+        try {
+            client.pushMessage(targetUserId, {
+                type: 'text',
+                text:
 `📢 STATUS CHANGE
 ${msg}
 🕒 ${getThaiTime()}`
-        });
+            });
+        } catch (err) {
+            logSystem("Push Error: " + err.message);
+        }
     }
 
     res.sendStatus(200);
@@ -117,6 +125,22 @@ app.get('/api/motor/command', (req, res) => {
         motorCommand = "NONE";
     }
 });
+
+// ================= HELP MESSAGE =================
+function helpMessage() {
+    return `📘 วิธีใช้งานระบบควบคุมมอเตอร์
+
+⚙️ คำสั่ง:
+👉 เปิด = สั่งมอเตอร์ทำงาน
+👉 ปิด = สั่งหยุดมอเตอร์
+👉 สถานะ = ดูสถานะระบบ
+
+📡 ระบบแจ้งเตือนอัตโนมัติ
+⚙️ สถานะ REALTIME จาก ESP32
+
+🕒 เวลา: ${getThaiTime()}
+`;
+}
 
 // ================= WEBHOOK LINE =================
 app.post('/webhook', async (req, res) => {
@@ -183,10 +207,16 @@ app.post('/webhook', async (req, res) => {
 ━━━━━━━━━━━━
 ⚙️ State: ${motorData.state}
 📶 Online: ${motorData.isOffline ? "OFFLINE" : "ONLINE"}
-🕒 เวลา: ${getThaiTime()}
+🕒 ${getThaiTime()}
 ━━━━━━━━━━━━`
             });
         }
+
+        // ================= DEFAULT HELP =================
+        return client.replyMessage(event.replyToken, {
+            type: 'text',
+            text: helpMessage()
+        });
     }
 });
 
