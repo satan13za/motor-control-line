@@ -52,21 +52,22 @@ const SUPER_ADMIN_ID = process.env.ADMIN_ID || "";
 // ================= GET USER SAFE =================
 async function getUser(userId) {
     if (!dbReady) {
-    console.log("DB NOT READY");
-    return null;
-}
+        console.log("DB NOT READY");
+        return null;
+    }
 
     let user = await User.findOne({ userId });
+
     if (!user) {
-    user = await User.create({
-        userId,
-        role: "user",
-        approved: false
-    });
-} else {
-    // กัน role หาย / null
-    if (!user.role) user.role = "user";
-}
+        user = await User.create({
+            userId,
+            role: "user",
+            approved: false
+        });
+    } else {
+        if (!user.role) user.role = "user";
+    }
+
     return user;
 }
 
@@ -108,15 +109,15 @@ setInterval(() => {
 // ================= INTRO =================
 function introMessage(user) {
 
-    const isAdmin = user.role === "admin";
-    const canControl = isAdmin || user.approved;
+    const isAdmin = user?.role?.toLowerCase?.() === "admin";
+    const canControl = isAdmin || user?.approved === true;
 
     return `🤖 ระบบควบคุมมอเตอร์อัจฉริยะ
 
 ━━━━━━━━━━━━━━━━━━━━
 📡 ESP32 + LINE CONTROL SYSTEM
 
-👤 สิทธิ์: ${isAdmin ? "ADMIN" : user.approved ? "USER APPROVED" : "WAIT APPROVAL"}
+👤 สิทธิ์: ${isAdmin ? "ADMIN" : user?.approved ? "USER APPROVED" : "WAIT APPROVAL"}
 
 ━━━━━━━━━━━━━━━━━━━━
 📊 สถานะ:
@@ -130,57 +131,6 @@ ${!canControl ? "👉 ดูสถานะได้เท่านั้น" : 
 
 🕒 ${getThaiTime()}`;
 }
-
-// ================= ADMIN MENU =================
-function adminMenu() {
-    return `👑 ADMIN MENU
-
-👉 users (ดูผู้ใช้)
-👉 approve ID (อนุมัติ)
-👉 revoke ID (ยกเลิก)
-👉 promote ID (ตั้งAdmin)
-👉 demote ID (ลดสิทธิ์)
-
-🕒 ${getThaiTime()}`;
-}
-
-// ================= REPORT =================
-app.post('/api/motor/report', (req, res) => {
-
-    const { state, faultCode } = req.body;
-
-    motorData.lastHeartbeat = Date.now();
-
-    if (state) motorData.state = state;
-
-    if (state === "FAULT") {
-        motorData.fault = true;
-        motorData.faultCode = faultCode || "UNKNOWN";
-    } else {
-        motorData.fault = false;
-        motorData.faultCode = null;
-    }
-
-    res.sendStatus(200);
-});
-
-// ================= COMMAND =================
-app.get('/api/motor/command', (req, res) => {
-
-    const cmd = motorCommand.cmd;
-
-    if (motorCommand.timestamp !== 0 &&
-        Date.now() - motorCommand.timestamp > 10000) {
-        motorCommand = { cmd: "NONE", timestamp: 0 };
-    }
-
-    res.json({
-        command: cmd,
-        state: motorData.state,
-        fault: motorData.fault,
-        faultCode: motorData.faultCode
-    });
-});
 
 // ================= WEBHOOK =================
 app.post('/webhook', async (req, res) => {
@@ -196,22 +146,19 @@ app.post('/webhook', async (req, res) => {
 
         const user = await getUser(userId);
 
-      const role = (user?.role || "").toLowerCase().trim();
-
-const isSuperAdmin = role === "admin";
-
-const canControl = isSuperAdmin || user.approved === true;
+        // ❌ FIX: กัน user null
         if (!user) {
-    return client.replyMessage(event.replyToken, {
-        type: "text",
-        text: "ระบบยังเชื่อมต่อฐานข้อมูลไม่พร้อม"
-        console.log("USERID:", userId);
-console.log("ROLE:", user?.role);
-console.log("APPROVED:", user?.approved);
-console.log("CAN:", canControl);
-    });
-}
+            console.log("USER NOT READY:", userId);
+            return;
+        }
 
+        const role = (user?.role || "").toLowerCase().trim();
+
+        const isSuperAdmin =
+            role === "admin" ||
+            userId === SUPER_ADMIN_ID;
+
+        const canControl = isSuperAdmin || user.approved === true;
 
         // ================= START =================
         if (text === "เริ่ม") {
@@ -246,7 +193,7 @@ console.log("CAN:", canControl);
             if (!isOnline()) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "⚠️ ระบบ OFFLINE อยู่ (ESP32 ยังไม่ตอบ heartbeat)"
+                    text: "⚠️ ระบบ OFFLINE อยู่"
                 });
             }
 
@@ -258,7 +205,7 @@ console.log("CAN:", canControl);
             });
         }
 
-        // ================= CLOSE (FIXED) =================
+        // ================= CLOSE =================
         if (text === "ปิด") {
 
             if (!canControl) {
@@ -271,7 +218,7 @@ console.log("CAN:", canControl);
             if (!isOnline()) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "⚠️ ระบบ OFFLINE อยู่ (คำสั่งจะค้างจนกว่า ESP32 จะออนไลน์)"
+                    text: "⚠️ ระบบ OFFLINE อยู่"
                 });
             }
 
