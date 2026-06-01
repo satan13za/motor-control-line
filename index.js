@@ -80,23 +80,51 @@ function isOnline() {
     return (Date.now() - motorData.lastHeartbeat) < timeout;
 }
 
-// ================= INTRO MESSAGE =================
+// ================= INTRO =================
 function introMessage(isAdmin) {
     return `👋 สวัสดี ยินดีต้อนรับสู่ MOTOR CONTROL SYSTEM
 
 📘 ระบบนี้ใช้สำหรับ:
 - ควบคุมมอเตอร์ผ่าน LINE
-- ตรวจสอบสถานะเครื่องจักรแบบ Real-time
+- ตรวจสอบสถานะเครื่องจักร
 - แจ้งเตือน ESP32 Offline
-- แจ้งเตือน Fault (OVERLOAD / CONTACTOR)
+- แจ้งเตือน Fault
 
 ⚙️ คำสั่ง:
 👉 สถานะ
 👉 เปิด / ปิด ${isAdmin ? '(Admin)' : ''}
 
-📡 ระบบจะตรวจสอบ ESP32 และมอเตอร์อัตโนมัติ
+📡 ระบบอัตโนมัติทำงานตลอด
 
 🕒 ${getThaiTime()}`;
+}
+
+// ================= ADMIN MENU =================
+function adminMenu() {
+    return {
+        type: "text",
+        text: `👑 ADMIN MENU`,
+        quickReply: {
+            items: [
+                {
+                    type: "action",
+                    action: { type: "message", label: "📊 สถานะ", text: "สถานะ" }
+                },
+                {
+                    type: "action",
+                    action: { type: "message", label: "▶️ เปิด", text: "เปิด" }
+                },
+                {
+                    type: "action",
+                    action: { type: "message", label: "⛔ ปิด", text: "ปิด" }
+                },
+                {
+                    type: "action",
+                    action: { type: "message", label: "👑 Menu", text: "menu" }
+                }
+            ]
+        }
+    };
 }
 
 // ================= WEBHOOK =================
@@ -117,11 +145,24 @@ app.post('/webhook', async (req, res) => {
         const online = isOnline();
 
         // ================= INTRO =================
-        if (text === "เริ่ม" || text === "สวัสดี" || text === "menu") {
+        if (text === "เริ่ม" || text === "สวัสดี") {
             return client.replyMessage(event.replyToken, {
                 type: "text",
                 text: introMessage(isAdmin)
             });
+        }
+
+        // ================= ADMIN MENU =================
+        if (text === "admin" || text === "menu") {
+
+            if (!isAdmin) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่มีสิทธิ์เข้า ADMIN MENU"
+                });
+            }
+
+            return client.replyMessage(event.replyToken, adminMenu());
         }
 
         // ================= STATUS =================
@@ -133,7 +174,7 @@ app.post('/webhook', async (req, res) => {
 ⚙️ ${motorData.state}
 📡 ${online ? "ONLINE ✅" : "OFFLINE ❌"}
 ⚠️ Fault: ${motorData.fault ? "YES ❌" : "NO ✅"}
-🧾 Code: ${motorData.faultCode ? motorData.faultCode : "NORMAL (ไม่มี Fault)"}
+🧾 Code: ${motorData.faultCode ? motorData.faultCode : "NORMAL"}
 👤 Role: ${user.role}
 🕒 ${getThaiTime()}`
             });
@@ -152,7 +193,7 @@ app.post('/webhook', async (req, res) => {
             if (!online) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "⚠️ ESP32 OFFLINE\nไม่สามารถสั่งงานได้"
+                    text: "⚠️ ESP32 OFFLINE"
                 });
             }
 
@@ -177,7 +218,7 @@ app.post('/webhook', async (req, res) => {
             if (!online) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "⚠️ ESP32 OFFLINE\nไม่สามารถสั่งงานได้"
+                    text: "⚠️ ESP32 OFFLINE"
                 });
             }
 
@@ -194,9 +235,8 @@ app.post('/webhook', async (req, res) => {
             type: "text",
             text:
 `📘 MOTOR SYSTEM
-👉 พิมพ์ "เริ่ม" เพื่อดูแนะนำระบบ
-👉 สถานะ
-👉 เปิด / ปิด (Admin)`
+👉 พิมพ์ "เริ่ม"
+👉 พิมพ์ "menu" (admin)`
         });
     }
 });
