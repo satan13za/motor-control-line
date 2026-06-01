@@ -58,7 +58,7 @@ async function getUser(userId) {
     return user;
 }
 
-// ================= MOTOR STATE (FULL FIXED) =================
+// ================= MOTOR STATE =================
 let motorData = {
     state: "STANDBY",
     lastHeartbeat: 0,
@@ -66,7 +66,8 @@ let motorData = {
     faultCode: null
 };
 
-let motorCommand = "NONE";
+// ================= COMMAND SYSTEM (QUEUE) =================
+let commandQueue = [];
 
 // ================= ONLINE CHECK =================
 function isOnline() {
@@ -75,17 +76,27 @@ function isOnline() {
     return (Date.now() - motorData.lastHeartbeat) < timeout;
 }
 
+// ================= WATCHDOG =================
+setInterval(() => {
+
+    const timeout = 30000;
+
+    if (motorData.lastHeartbeat !== 0 &&
+        Date.now() - motorData.lastHeartbeat > timeout) {
+
+        motorData.state = "OFFLINE";
+        motorData.fault = true;
+        motorData.faultCode = "WATCHDOG_TIMEOUT";
+    }
+
+}, 5000);
+
 // ================= INTRO =================
 function introMessage(isAdmin) {
-    return `👋 ยินดีต้อนรับ MOTOR CONTROL SYSTEM
+    return `👋 MOTOR CONTROL SYSTEM
 
-📘 ระบบควบคุมมอเตอร์ผ่าน LINE
-📡 ตรวจสอบ ESP32 แบบ Real-time
-⚠️ แจ้งเตือน OFFLINE / FAULT
-
-📊 คำสั่ง:
-👉 สถานะ
-👉 เปิด / ปิด ${isAdmin ? '(ADMIN)' : ''}
+📡 ESP32 Real-time Control
+⚙️ STATUS / ON / OFF ${isAdmin ? '(ADMIN)' : ''}
 
 🕒 ${getThaiTime()}`;
 }
@@ -94,20 +105,16 @@ function introMessage(isAdmin) {
 function adminMenu() {
     return `👑 ADMIN MENU
 
-📊 คำสั่ง:
 👉 สถานะ
 👉 เปิด
 👉 ปิด
 
-👥 USER:
-👉 /users
-👉 /approve ID
-👉 /remove ID
-
-🕒 ${getThaiTime()}`;
+👥 /users
+👥 /approve ID
+👥 /remove ID`;
 }
 
-// ================= 🔥 ESP32 REPORT =================
+// ================= ESP32 REPORT =================
 app.post('/api/motor/report', (req, res) => {
 
     const { state, faultCode } = req.body;
@@ -128,13 +135,13 @@ app.post('/api/motor/report', (req, res) => {
     res.sendStatus(200);
 });
 
-// ================= 🔥 ESP32 COMMAND =================
+// ================= ESP32 COMMAND =================
 app.get('/api/motor/command', (req, res) => {
 
-    const cmd = motorCommand;
+    let cmd = "NONE";
 
-    if (cmd !== "NONE") {
-        motorCommand = "NONE";
+    if (commandQueue.length > 0) {
+        cmd = commandQueue.shift();
     }
 
     res.json({
@@ -161,7 +168,7 @@ app.post('/webhook', async (req, res) => {
         const isAdmin = user.role === "admin";
         const online = isOnline();
 
-        // ================= INTRO =================
+        // ===== START =====
         if (["เริ่ม", "สวัสดี", "menu"].includes(text)) {
             return client.replyMessage(event.replyToken, {
                 type: "text",
@@ -169,7 +176,7 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // ================= ADMIN MENU =================
+        // ===== ADMIN =====
         if (text === "admin") {
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
@@ -184,7 +191,7 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // ================= STATUS =================
+        // ===== STATUS =====
         if (text === "สถานะ") {
             return client.replyMessage(event.replyToken, {
                 type: "text",
@@ -199,7 +206,7 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // ================= OPEN =================
+        // ===== OPEN =====
         if (text === "เปิด") {
 
             if (!isAdmin) {
@@ -209,22 +216,15 @@ app.post('/webhook', async (req, res) => {
                 });
             }
 
-            if (!online) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "⚠️ ESP32 OFFLINE"
-                });
-            }
-
-            motorCommand = "ON";
+            commandQueue.push("ON");
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: `⚙️ สั่งเปิดแล้ว\n🕒 ${getThaiTime()}`
+                text: `⚙️ ส่งคำสั่ง ON แล้ว`
             });
         }
 
-        // ================= CLOSE =================
+        // ===== CLOSE =====
         if (text === "ปิด") {
 
             if (!isAdmin) {
@@ -234,18 +234,11 @@ app.post('/webhook', async (req, res) => {
                 });
             }
 
-            if (!online) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "⚠️ ESP32 OFFLINE"
-                });
-            }
-
-            motorCommand = "OFF";
+            commandQueue.push("OFF");
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: `🛑 สั่งปิดแล้ว\n🕒 ${getThaiTime()}`
+                text: `🛑 ส่งคำสั่ง OFF แล้ว`
             });
         }
 
