@@ -51,7 +51,10 @@ const SUPER_ADMIN_ID = process.env.ADMIN_ID || "";
 
 // ================= GET USER SAFE =================
 async function getUser(userId) {
-    if (!dbReady) return { userId, role: "user", approved: false };
+    if (!dbReady) {
+    console.log("DB NOT READY");
+    return null;
+}
 
     let user = await User.findOne({ userId });
     if (!user) {
@@ -198,6 +201,16 @@ app.post('/webhook', async (req, res) => {
 const isSuperAdmin = role === "admin";
 
 const canControl = isSuperAdmin || user.approved === true;
+        if (!user) {
+    return client.replyMessage(event.replyToken, {
+        type: "text",
+        text: "ระบบยังเชื่อมต่อฐานข้อมูลไม่พร้อม"
+        console.log("USERID:", userId);
+console.log("ROLE:", user?.role);
+console.log("APPROVED:", user?.approved);
+console.log("CAN:", canControl);
+    });
+}
 
 
         // ================= START =================
