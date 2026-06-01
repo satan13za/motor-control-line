@@ -90,6 +90,29 @@ function isOnline() {
     return motorData.lastHeartbeat !== 0 &&
         (Date.now() - motorData.lastHeartbeat) < 20000;
 }
+// ================= WATCHDOG =================
+setInterval(() => {
+
+    const timeout = 30000;
+
+    if (
+        motorData.lastHeartbeat !== 0 &&
+        Date.now() - motorData.lastHeartbeat > timeout
+    ) {
+
+        motorData.state = "STOP";
+        motorData.fault = true;
+        motorData.faultCode = "ESP32_OFFLINE";
+
+        motorCommand = {
+            cmd: "NONE",
+            timestamp: 0
+        };
+    }
+
+}, 5000);
+
+
 
 // ================= ADMIN MENU =================
 function adminMenu() {
@@ -136,6 +159,49 @@ ${!canControl ? "👉 ดูสถานะได้เท่านั้น" : 
 🕒 ${getThaiTime()}`;
 }
 
+// ================= REPORT =================
+app.post('/api/motor/report', async (req, res) => {
+
+    const { state, faultCode } = req.body;
+
+    motorData.lastHeartbeat = Date.now();
+
+    if (state) {
+        motorData.state = state;
+    }
+
+    if (state === "FAULT") {
+        motorData.fault = true;
+        motorData.faultCode = faultCode || "UNKNOWN";
+    } else {
+        motorData.fault = false;
+        motorData.faultCode = null;
+    }
+
+    res.sendStatus(200);
+});
+
+// ================= COMMAND =================
+app.get('/api/motor/command', (req, res) => {
+
+    if (
+        motorCommand.timestamp !== 0 &&
+        Date.now() - motorCommand.timestamp > 10000
+    ) {
+        motorCommand = {
+            cmd: "NONE",
+            timestamp: 0
+        };
+    }
+
+    res.json({
+        command: motorCommand.cmd,
+        state: motorData.state,
+        fault: motorData.fault,
+        faultCode: motorData.faultCode
+    });
+});
+
 // ================= WEBHOOK =================
 app.post('/webhook', async (req, res) => {
 
@@ -154,7 +220,12 @@ app.post('/webhook', async (req, res) => {
 
         const isAdmin = userId === SUPER_ADMIN_ID;
 
-        const canControl = isAdmin || user.approved === true;
+        const role = (user?.role || "").toLowerCase().trim();
+
+const canControl =
+    isAdmin ||
+    role === "admin" ||
+    user.approved === true;
 
         // ================= START =================
         if (text === "เริ่ม") {
@@ -195,12 +266,16 @@ app.post('/webhook', async (req, res) => {
 
             users.forEach((u, i) => {
 
-                const status =
-                    u.userId === SUPER_ADMIN_ID
-                        ? "👑 ADMIN"
-                        : u.approved
-                        ? "✅ APPROVED"
-                        : "⏳ WAIT";
+                const role = (u.role || "").toLowerCase().trim();
+
+const status =
+    u.userId === SUPER_ADMIN_ID
+        ? "👑 SUPER ADMIN"
+        : role === "admin"
+        ? "👑 ADMIN"
+        : u.approved
+        ? "✅ APPROVED"
+        : "⏳ WAIT";
 
                 msg += `${i + 1}. ${status}\n${u.userId}\n\n`;
             });
