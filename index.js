@@ -27,7 +27,6 @@ function logSystem(msg) {
 const MONGO_URL = process.env.MONGO_URL;
 const CHANNEL_ACCESS_TOKEN = process.env.CHANNEL_ACCESS_TOKEN;
 const CHANNEL_SECRET = process.env.CHANNEL_SECRET;
-const ADMIN_ID = process.env.ADMIN_ID;
 
 // ================= LINE =================
 const client = new Client({
@@ -44,7 +43,7 @@ if (MONGO_URL) {
     console.log("❌ MONGO_URL missing");
 }
 
-// ================= USER =================
+// ================= USER DB =================
 const userSchema = new mongoose.Schema({
     userId: String,
     role: { type: String, default: "user" },
@@ -55,10 +54,12 @@ const User = mongoose.model("User", userSchema);
 
 async function getUser(userId) {
     let user = await User.findOne({ userId });
+
     if (!user) {
         user = await User.create({ userId });
         console.log("NEW USER:", userId);
     }
+
     return user;
 }
 
@@ -73,109 +74,30 @@ let motorData = {
 
 let motorCommand = "NONE";
 
-// ================= OFFLINE CHECK =================
-setInterval(() => {
+// ================= HELP (แยกสิทธิ์จริง) =================
+function helpMessage(isAdmin) {
+    if (isAdmin) {
+        return `📘 ADMIN CONTROL SYSTEM
 
-    const timeout = 20000;
-
-    if (!motorData.isOffline &&
-        Date.now() - motorData.lastHeartbeat > timeout
-    ) {
-        motorData.isOffline = true;
-
-        logSystem("ESP32 OFFLINE");
-
-        if (ADMIN_ID) {
-            client.pushMessage(ADMIN_ID, {
-                type: "text",
-                text: `❌ ESP32 OFFLINE\n🕒 ${getThaiTime()}`
-            }).catch(() => {});
-        }
-    }
-
-}, 5000);
-
-// ================= REPORT =================
-app.post('/api/motor/report', (req, res) => {
-
-    const { state, error } = req.body;
-    if (!state) return res.sendStatus(200);
-
-    motorData.state = state;
-    motorData.lastHeartbeat = Date.now();
-    motorData.isOffline = false;
-
-    if (state === "RUN" || state === "STOP") {
-        motorData.fault = false;
-        motorData.faultCode = null;
-        logSystem(`STATE -> ${state}`);
-    }
-
-    if (state === "FAULT") {
-        motorData.fault = true;
-        motorData.faultCode = error || "UNKNOWN";
-
-        logSystem(`FAULT -> ${error}`);
-
-        if (ADMIN_ID) {
-            client.pushMessage(ADMIN_ID, {
-                type: "text",
-                text:
-`🚨 MOTOR FAULT
-❌ ${motorData.faultCode}
-🕒 ${getThaiTime()}`
-            }).catch(() => {});
-        }
-    }
-
-    res.sendStatus(200);
-});
-
-// ================= COMMAND =================
-app.get('/api/motor/command', (req, res) => {
-
-    const cmd = motorCommand;
-
-    res.json({
-        command: cmd,
-        state: motorData.state,
-        fault: motorData.fault,
-        faultCode: motorData.faultCode,
-        time: getThaiTime()
-    });
-
-    if (cmd !== "NONE") motorCommand = "NONE";
-});
-
-// ================= INTRO SYSTEM =================
-function introMessage() {
-    return `👋 สวัสดี ยินดีต้อนรับสู่ MOTOR CONTROL SYSTEM
-
-📘 ระบบนี้ใช้สำหรับ:
-- ควบคุมมอเตอร์ผ่าน LINE
-- ตรวจสอบสถานะเครื่องจักร Real-time
-- แจ้งเตือน ESP32 Offline
-- แจ้งเตือน MOTOR FAULT (OVERLOAD / CONTACTOR)
-
-⚙️ คำสั่ง:
+📊 สถานะ
 👉 เปิด
 👉 ปิด
-👉 สถานะ
 
-🕒 ${getThaiTime()}
-`;
-}
+🔐 ADMIN TOOLS:
+👉 /approve Uxxxx
+👉 /remove Uxxxx
+👉 /users
 
-// ================= HELP =================
-function helpMessage(role) {
-    return `📘 MOTOR SYSTEM
+🕒 ${getThaiTime()}`;
+    }
 
-📊 สถานะ = ดูระบบ
-🆕 พิมพ์ "เริ่ม" เพื่อดูคู่มือ
+    return `📘 USER SYSTEM
 
-${role === "admin"
-? "🔐 ADMIN:\n👉 เปิด\n👉 ปิด"
-: "🔒 USER (ดูได้อย่างเดียว)"}
+📊 สถานะ
+
+⚠️ คำสั่งควบคุม (ต้องเป็น ADMIN):
+👉 เปิด
+👉 ปิด
 
 🕒 ${getThaiTime()}`;
 }
@@ -194,14 +116,6 @@ app.post('/webhook', async (req, res) => {
 
         const user = await getUser(userId);
         const isAdmin = user.role === "admin";
-
-        // ================= INTRO =================
-        if (text === "เริ่ม" || text === "เมนู" || text === "help") {
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: introMessage()
-            });
-        }
 
         // ================= STATUS =================
         if (text === "สถานะ") {
@@ -224,21 +138,7 @@ app.post('/webhook', async (req, res) => {
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ไม่มีสิทธิ์"
-                });
-            }
-
-            if (motorData.isOffline) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "⚠️ ESP32 OFFLINE"
-                });
-            }
-
-            if (motorData.fault) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: `⚠️ FAULT ACTIVE\n${motorData.faultCode}`
+                    text: "❌ ไม่มีสิทธิ์ (ต้องเป็น ADMIN)"
                 });
             }
 
@@ -256,21 +156,7 @@ app.post('/webhook', async (req, res) => {
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ไม่มีสิทธิ์"
-                });
-            }
-
-            if (motorData.isOffline) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "⚠️ ESP32 OFFLINE"
-                });
-            }
-
-            if (motorData.fault) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: `⚠️ FAULT ACTIVE\n${motorData.faultCode}`
+                    text: "❌ ไม่มีสิทธิ์ (ต้องเป็น ADMIN)"
                 });
             }
 
@@ -282,9 +168,92 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
+        // ================= APPROVE ADMIN =================
+        if (text.startsWith("/approve")) {
+
+            if (!isAdmin) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่มีสิทธิ์"
+                });
+            }
+
+            const targetId = text.split(" ")[1];
+
+            const target = await User.findOne({ userId: targetId });
+
+            if (!target) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่พบ user"
+                });
+            }
+
+            target.role = "admin";
+            await target.save();
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: `✅ อนุมัติเป็น ADMIN แล้ว\n👤 ${targetId}`
+            });
+        }
+
+        // ================= REMOVE ADMIN =================
+        if (text.startsWith("/remove")) {
+
+            if (!isAdmin) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่มีสิทธิ์"
+                });
+            }
+
+            const targetId = text.split(" ")[1];
+
+            const target = await User.findOne({ userId: targetId });
+
+            if (!target) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่พบ user"
+                });
+            }
+
+            target.role = "user";
+            await target.save();
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: `🟡 ถอนสิทธิ์แล้ว\n👤 ${targetId}`
+            });
+        }
+
+        // ================= LIST USERS =================
+        if (text === "/users") {
+
+            if (!isAdmin) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่มีสิทธิ์"
+                });
+            }
+
+            const users = await User.find().limit(10);
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text:
+users.map(u =>
+`👤 ${u.userId}
+🔐 ${u.role}`
+).join("\n\n")
+            });
+        }
+
+        // ================= DEFAULT HELP =================
         return client.replyMessage(event.replyToken, {
             type: "text",
-            text: helpMessage(user.role)
+            text: helpMessage(isAdmin)
         });
     }
 });
