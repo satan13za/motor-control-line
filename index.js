@@ -1,4 +1,4 @@
-require('dotenv').config(); // เพิ่มบรรทัดนี้เพื่อให้ใช้งานไฟล์ .env ได้
+
 const express = require('express');
 const { Client } = require('@line/bot-sdk');
 const mongoose = require('mongoose');
