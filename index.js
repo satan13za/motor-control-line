@@ -24,7 +24,7 @@ const client = new Client({
     channelSecret: process.env.CHANNEL_SECRET || ""
 });
 
-// ================= DB SAFE CONNECT =================
+// ================= DB SAFE =================
 let dbReady = false;
 
 if (process.env.MONGO_URL) {
@@ -42,24 +42,27 @@ if (process.env.MONGO_URL) {
 const User = mongoose.model("User", new mongoose.Schema({
     userId: String,
     role: { type: String, default: "user" },
-    approved: { type: Boolean, default: false }, // 🔥 อนุมัติใช้งาน
+    approved: { type: Boolean, default: false },
     createdAt: { type: Date, default: Date.now }
 }));
 
-// ================= ADMIN คนเดียว =================
 const SUPER_ADMIN_ID = process.env.ADMIN_ID || "";
 
-// ================= GET USER SAFE =================
+// ================= SAFE GET USER =================
 async function getUser(userId) {
-    if (!dbReady) return { userId, role: "user", approved: false };
+    try {
+        if (!dbReady) return { userId, role: "user", approved: false };
 
-    let user = await User.findOne({ userId });
-    if (!user) user = await User.create({ userId });
+        let user = await User.findOne({ userId });
+        if (!user) user = await User.create({ userId });
 
-    return user;
+        return user;
+    } catch (err) {
+        return { userId, role: "user", approved: false };
+    }
 }
 
-// ================= MOTOR STATE =================
+// ================= MOTOR =================
 let motorData = {
     state: "STOP",
     lastHeartbeat: 0,
@@ -67,7 +70,6 @@ let motorData = {
     faultCode: null
 };
 
-// ================= COMMAND =================
 let motorCommand = {
     cmd: "NONE",
     timestamp: 0
@@ -94,55 +96,40 @@ setInterval(() => {
     }
 }, 5000);
 
-// ================= INTRO (ไทยเข้าใจง่าย) =================
-function introMessage(user) {
+// ================= INTRO =================
+function introMessage(user, canControl) {
 
-    const isAdmin = user.userId === SUPER_ADMIN_ID;
-    const canControl = isAdmin || user.approved;
+    const isSuper = user.userId === SUPER_ADMIN_ID;
 
-    return `🤖 ระบบควบคุมมอเตอร์อัจฉริยะ
-
-━━━━━━━━━━━━━━━━━━━━
-📡 ESP32 + LINE CONTROL SYSTEM
-
-👤 สถานะผู้ใช้:
-- สิทธิ์: ${isAdmin ? "ผู้ดูแลระบบ (ADMIN)" : user.approved ? "ผู้ใช้งานที่อนุมัติแล้ว" : "รอการอนุมัติ"}
+    return `🤖 ระบบควบคุมมอเตอร์
 
 ━━━━━━━━━━━━━━━━━━━━
-📊 สถานะเครื่อง:
-⚙️ ${motorData.state}
-📶 ${isOnline() ? "ONLINE" : "OFFLINE"}
+👤 สถานะ: ${isSuper ? "ADMIN" : user.approved ? "อนุมัติแล้ว" : "รออนุมัติ"}
+
+⚙️ เครื่อง: ${motorData.state}
+📡 ${isOnline() ? "ONLINE" : "OFFLINE"}
 ⚠️ Fault: ${motorData.fault ? "YES" : "NO"}
 
 ━━━━━━━━━━━━━━━━━━━━
-📌 คำสั่งที่ใช้ได้:
-${!canControl ? "👉 สถานะ (ดูได้อย่างเดียว)" : "👉 เปิด / ปิด / สถานะ"}
+📌 คำสั่ง:
+${canControl ? "👉 เปิด / ปิด / สถานะ" : "👉 สถานะ (ดูอย่างเดียว)"}
 
-🕒 ${getThaiTime()}
-
-💡 พิมพ์ “สถานะ” เพื่อตรวจสอบระบบ`;
+🕒 ${getThaiTime()}`;
 }
 
 // ================= ADMIN MENU =================
 function adminMenu() {
-    return `👑 เมนูผู้ดูแลระบบ
+    return `👑 เมนูผู้ดูแล
 
-━━━━━━━━━━━━━━━━━━━━
-👉 users (ดูผู้ใช้)
-👉 approve ID (อนุมัติ)
-👉 revoke ID (ยกเลิก)
-👉 promote ID (ตั้ง admin)
-👉 demote ID (ลดสิทธิ์)
-
-⚠️ หมายเหตุ:
-มี admin ได้แค่ 1 คนเท่านั้น
+👉 users
+👉 approve ID
+👉 revoke ID
 
 🕒 ${getThaiTime()}`;
 }
 
 // ================= ESP32 REPORT =================
 app.post('/api/motor/report', (req, res) => {
-
     const { state, faultCode } = req.body;
 
     motorData.lastHeartbeat = Date.now();
@@ -160,7 +147,7 @@ app.post('/api/motor/report', (req, res) => {
     res.sendStatus(200);
 });
 
-// ================= ESP32 COMMAND =================
+// ================= COMMAND =================
 app.get('/api/motor/command', (req, res) => {
 
     const cmd = motorCommand.cmd;
@@ -185,145 +172,164 @@ app.post('/webhook', async (req, res) => {
 
     for (const event of req.body.events || []) {
 
-        const userId = event.source.userId;
-        const text = event.message?.text?.trim();
+        try {
 
-        if (!userId || !text) continue;
+            const userId = event.source.userId;
+            const text = event.message?.text?.trim();
 
-        const user = await getUser(userId);
+            if (!userId || !text) continue;
 
-        const isSuperAdmin = userId === SUPER_ADMIN_ID;
-        const canControl = isSuperAdmin || user.approved;
+            const user = await getUser(userId);
 
-        // ================= START =================
-        if (text === "เริ่ม") {
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: introMessage(user)
-            });
-        }
+            const isSuperAdmin = userId === SUPER_ADMIN_ID;
+            const canControl = isSuperAdmin || user.approved;
 
-        // ================= STATUS =================
-        if (text === "สถานะ") {
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text:
+            // ================= START =================
+            if (text === "เริ่ม") {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: introMessage(user, canControl)
+                });
+            }
+
+            // ================= STATUS =================
+            if (text === "สถานะ") {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text:
 `📊 สถานะระบบ
 ⚙️ ${motorData.state}
-📶 ${isOnline() ? "ONLINE" : "OFFLINE"}
+📡 ${isOnline() ? "ONLINE" : "OFFLINE"}
 ⚠️ Fault: ${motorData.fault ? "YES" : "NO"}`
-            });
-        }
-
-        // ================= ADMIN MENU (SUPER ADMIN ONLY) =================
-        if (text === "admin") {
-            if (!isSuperAdmin) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "❌ ไม่มีสิทธิ์เข้าถึงเมนูผู้ดูแล"
                 });
             }
 
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: adminMenu()
-            });
-        }
+            // ================= ADMIN MENU =================
+            if (text === "admin") {
+                if (!isSuperAdmin) {
+                    return client.replyMessage(event.replyToken, {
+                        type: "text",
+                        text: "❌ ไม่มีสิทธิ์"
+                    });
+                }
 
-        // ================= APPROVE USER =================
-        if (text.startsWith("approve ")) {
-
-            if (!isSuperAdmin) return;
-
-            const id = text.split(" ")[1];
-
-            await User.updateOne({ userId: id }, { approved: true });
-
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: `✅ อนุมัติผู้ใช้: ${id}`
-            });
-        }
-
-        // ================= REVOKE =================
-        if (text.startsWith("revoke ")) {
-
-            if (!isSuperAdmin) return;
-
-            const id = text.split(" ")[1];
-
-            await User.updateOne({ userId: id }, { approved: false });
-
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: `❌ ถอนสิทธิ์: ${id}`
-            });
-        }
-
-        // ================= USERS =================
-        if (text === "users") {
-
-            if (!isSuperAdmin) return;
-
-            const users = await User.find().limit(10);
-
-            const list = users.map(u =>
-                `${u.userId} | ${u.approved ? "อนุมัติแล้ว" : "รออนุมัติ"}`
-            ).join("\n");
-
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: `👥 รายชื่อผู้ใช้\n\n${list}`
-            });
-        }
-
-        // ================= OPEN =================
-        if (text === "เปิด") {
-
-            if (!canControl) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ยังไม่ได้รับอนุมัติให้ควบคุมระบบ"
+                    text: adminMenu()
                 });
             }
 
-            if (!isOnline()) {
+            // ================= USERS =================
+            if (text === "users") {
+                if (!isSuperAdmin || !dbReady) {
+                    return client.replyMessage(event.replyToken, {
+                        type: "text",
+                        text: "❌ ไม่มีสิทธิ์หรือ DB ไม่พร้อม"
+                    });
+                }
+
+                const users = await User.find().limit(10);
+
+                const list = users.map(u =>
+                    `${u.userId} | ${u.approved ? "อนุมัติ" : "รอ"}`
+                ).join("\n");
+
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "⚠️ ระบบ OFFLINE อยู่ ไม่สามารถสั่งเปิดได้"
+                    text: `👥 USERS\n\n${list || "ไม่มีข้อมูล"}`
                 });
             }
 
-            motorCommand = { cmd: "ON", timestamp: Date.now() };
+            // ================= APPROVE =================
+            if (text.startsWith("approve ")) {
 
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: "⚙️ ส่งคำสั่งเปิดแล้ว"
-            });
-        }
+                if (!isSuperAdmin) {
+                    return client.replyMessage(event.replyToken, {
+                        type: "text",
+                        text: "❌ ไม่มีสิทธิ์"
+                    });
+                }
 
-        // ================= CLOSE =================
-        if (text === "ปิด") {
+                const id = text.split(" ")[1];
+                await User.updateOne({ userId: id }, { approved: true });
 
-            if (!canControl) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ยังไม่ได้รับอนุมัติ"
+                    text: `✅ อนุมัติ ${id}`
                 });
             }
 
-            motorCommand = { cmd: "OFF", timestamp: Date.now() };
+            // ================= REVOKE =================
+            if (text.startsWith("revoke ")) {
 
+                if (!isSuperAdmin) {
+                    return client.replyMessage(event.replyToken, {
+                        type: "text",
+                        text: "❌ ไม่มีสิทธิ์"
+                    });
+                }
+
+                const id = text.split(" ")[1];
+                await User.updateOne({ userId: id }, { approved: false });
+
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: `❌ ถอนสิทธิ์ ${id}`
+                });
+            }
+
+            // ================= OPEN =================
+            if (text === "เปิด") {
+
+                if (!canControl) {
+                    return client.replyMessage(event.replyToken, {
+                        type: "text",
+                        text: "❌ ยังไม่ได้รับอนุมัติ"
+                    });
+                }
+
+                if (!isOnline()) {
+                    return client.replyMessage(event.replyToken, {
+                        type: "text",
+                        text: "⚠️ ระบบ OFFLINE ไม่สามารถเปิดได้"
+                    });
+                }
+
+                motorCommand = { cmd: "ON", timestamp: Date.now() };
+
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "⚙️ ส่งคำสั่งเปิดแล้ว"
+                });
+            }
+
+            // ================= CLOSE (FIXED) =================
+            if (text === "ปิด") {
+
+                if (!canControl) {
+                    return client.replyMessage(event.replyToken, {
+                        type: "text",
+                        text: "❌ ยังไม่ได้รับอนุมัติ"
+                    });
+                }
+
+                motorCommand = { cmd: "OFF", timestamp: Date.now() };
+
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "🛑 ส่งคำสั่งปิดแล้ว"
+                });
+            }
+
+            // ================= DEFAULT =================
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: "🛑 ส่งคำสั่งปิดแล้ว"
+                text: "พิมพ์ 'เริ่ม' เพื่อใช้งาน"
             });
-        }
 
-        return client.replyMessage(event.replyToken, {
-            type: "text",
-            text: "พิมพ์ 'เริ่ม' เพื่อใช้งานระบบ"
-        });
+        } catch (err) {
+            console.log("WEBHOOK ERROR:", err.message);
+        }
     }
 });
 
