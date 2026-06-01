@@ -1,187 +1,148 @@
-#include <WiFi.h>
-#include <HTTPClient.h>
-#include <ArduinoJson.h>
+const express = require('express');
+const { Client } = require('@line/bot-sdk');
 
-// ========================= WIFI =========================
-const char* ssid = "Wokwi-GUEST";
-const char* password = "";
+const app = express();
+app.use(express.json());
 
-// ========================= SERVER =========================
-String serverName = "https://motor-control-line.onrender.com";
+// ================= LINE =================
+const client = new Client({
+    channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
+    channelSecret: process.env.CHANNEL_SECRET
+});
 
-// ========================= PIN =========================
-#define RELAY_PIN 26
-#define FAULT_BUTTON 14
-#define START_BTN 27
-#define STOP_BTN 25
-#define MODE_SWITCH 33
-#define RESET_BTN 32
+let targetUserId = null;
 
-// ========================= STATE =========================
-bool motorRunning = false;
-bool faultState = false;
+// ================= STATE =================
+let motorData = {
+    state: "STANDBY",
+    lastHeartbeat: Date.now(),
+    isOffline: false
+};
 
-String lastState = "";
-unsigned long lastCommandCheck = 0;
-unsigned long lastHeartbeat = 0;
+let motorCommand = "NONE";
 
-// ========================= WIFI =========================
-void connectWiFi() {
+// ================= OFFLINE CHECK =================
+setInterval(() => {
 
-  WiFi.begin(ssid, password);
+    const timeout = 15000;
 
-  Serial.print("Connecting");
+    if (!motorData.isOffline &&
+        Date.now() - motorData.lastHeartbeat > timeout
+    ) {
+        motorData.isOffline = true;
 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(300);
-    Serial.print(".");
-  }
-
-  Serial.println("\nWiFi Connected");
-  Serial.println(WiFi.localIP());
-}
-
-// ========================= SEND STATUS =========================
-void sendStatus(String state) {
-
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  HTTPClient http;
-  http.begin(serverName + "/api/motor/report");
-  http.addHeader("Content-Type", "application/json");
-
-  String json = "{\"state\":\"" + state + "\"}";
-
-  int code = http.POST(json);
-
-  Serial.print("STATUS: ");
-  Serial.print(state);
-  Serial.print(" | HTTP: ");
-  Serial.println(code);
-
-  http.end();
-}
-
-// ========================= COMMAND =========================
-void checkCommand() {
-
-  if (WiFi.status() != WL_CONNECTED) return;
-  if (faultState) return;
-
-  HTTPClient http;
-  http.setTimeout(3000);
-  http.begin(serverName + "/api/motor/command");
-
-  int httpCode = http.GET();
-
-  if (httpCode == 200) {
-
-    String payload = http.getString();
-
-    StaticJsonDocument<200> doc;
-    deserializeJson(doc, payload);
-
-    String command = doc["command"] | "NONE";
-
-    if (digitalRead(MODE_SWITCH) == HIGH) {
-
-      if (command == "ON" && !motorRunning) {
-        digitalWrite(RELAY_PIN, LOW);
-        motorRunning = true;
-      }
-
-      if (command == "OFF" && motorRunning) {
-        digitalWrite(RELAY_PIN, HIGH);
-        motorRunning = false;
-      }
-    }
-  }
-
-  http.end();
-}
-
-// ========================= HEARTBEAT =========================
-void heartbeat() {
-
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  String state;
-
-  if (faultState) state = "FAULT";
-  else if (motorRunning) state = "RUNNING";
-  else state = "STANDBY";
-
-  sendStatus(state);
-}
-
-// ========================= SETUP =========================
-void setup() {
-
-  Serial.begin(115200);
-
-  pinMode(RELAY_PIN, OUTPUT);
-
-  pinMode(FAULT_BUTTON, INPUT_PULLUP);
-  pinMode(START_BTN, INPUT_PULLUP);
-  pinMode(STOP_BTN, INPUT_PULLUP);
-  pinMode(MODE_SWITCH, INPUT_PULLUP);
-  pinMode(RESET_BTN, INPUT_PULLUP);
-
-  digitalWrite(RELAY_PIN, HIGH); // SAFE
-
-  connectWiFi();
-
-  sendStatus("STANDBY");
-}
-
-// ========================= LOOP =========================
-void loop() {
-
-  bool autoMode = (digitalRead(MODE_SWITCH) == HIGH);
-
-  // ================= FAULT =================
-  if (digitalRead(FAULT_BUTTON) == LOW) {
-
-    faultState = true;
-    motorRunning = false;
-    digitalWrite(RELAY_PIN, HIGH);
-
-    sendStatus("FAULT");
-  }
-
-  // ================= RESET =================
-  if (digitalRead(RESET_BTN) == LOW && faultState) {
-
-    faultState = false;
-    sendStatus("STANDBY");
-  }
-
-  // ================= MANUAL =================
-  if (!autoMode && !faultState) {
-
-    if (digitalRead(START_BTN) == LOW) {
-      motorRunning = true;
-      digitalWrite(RELAY_PIN, LOW);
+        if (targetUserId) {
+            client.pushMessage(targetUserId, {
+                type: 'text',
+                text: "❌ ESP32 OFFLINE\nไม่มี heartbeat เกิน 15 วินาที"
+            });
+        }
     }
 
-    if (digitalRead(STOP_BTN) == LOW) {
-      motorRunning = false;
-      digitalWrite(RELAY_PIN, HIGH);
+}, 5000);
+
+// ================= REPORT =================
+app.post('/api/motor/report', (req, res) => {
+
+    const { state } = req.body;
+
+    if (!state) return res.sendStatus(200);
+
+    const old = motorData.state;
+
+    motorData.state = state;
+
+    // ⭐ HEARTBEAT ทุก packet
+    motorData.lastHeartbeat = Date.now();
+    motorData.isOffline = false;
+
+    if (targetUserId && state !== old) {
+
+        let msg = "";
+
+        if (state === "RUNNING") msg = "⚙️ มอเตอร์ทำงานแล้ว";
+        if (state === "STANDBY") msg = "🛑 มอเตอร์หยุดแล้ว";
+        if (state === "FAULT") msg = "⚠️ FAULT";
+
+        client.pushMessage(targetUserId, {
+            type: 'text',
+            text: msg
+        });
     }
-  }
 
-  // ================= AUTO =================
-  if (autoMode && !faultState) {
+    res.sendStatus(200);
+});
 
-    if (millis() - lastCommandCheck > 2000) {
-      lastCommandCheck = millis();
-      checkCommand();
+// ================= COMMAND =================
+app.get('/api/motor/command', (req, res) => {
+
+    const cmd = motorCommand;
+
+    res.json({ command: cmd });
+
+    if (cmd !== "NONE") {
+        motorCommand = "NONE";
     }
-  }
+});
 
-  // ================= HEARTBEAT (สำคัญ) =================
-  if (millis() - lastHeartbeat > 5000) {
-    lastHeartbeat = millis();
-    heartbeat();
-  }
-}
+// ================= WEBHOOK =================
+app.post('/webhook', async (req, res) => {
+
+    res.sendStatus(200);
+
+    for (const event of req.body.events || []) {
+
+        if (event.source?.userId) {
+            targetUserId = event.source.userId;
+        }
+
+        const text = event.message?.text?.trim();
+
+        if (text === "เปิด") {
+
+            if (motorData.isOffline)
+                return client.replyMessage(event.replyToken, {
+                    type: 'text',
+                    text: "❌ ESP32 OFFLINE"
+                });
+
+            motorCommand = "ON";
+
+            return client.replyMessage(event.replyToken, {
+                type: 'text',
+                text: "⚙️ สั่งเปิดแล้ว"
+            });
+        }
+
+        if (text === "ปิด") {
+
+            if (motorData.isOffline)
+                return client.replyMessage(event.replyToken, {
+                    type: 'text',
+                    text: "❌ ESP32 OFFLINE"
+                });
+
+            motorCommand = "OFF";
+
+            return client.replyMessage(event.replyToken, {
+                type: 'text',
+                text: "🛑 สั่งปิดแล้ว"
+            });
+        }
+
+        if (text === "สถานะ") {
+
+            return client.replyMessage(event.replyToken, {
+                type: 'text',
+                text:
+`📊 ${motorData.state}
+${motorData.isOffline ? "OFFLINE" : "ONLINE"}`
+            });
+        }
+    }
+});
+
+// ================= START =================
+app.listen(10000, () => {
+    console.log("RUNNING");
+});
