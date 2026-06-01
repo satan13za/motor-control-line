@@ -193,13 +193,11 @@ app.post('/webhook', async (req, res) => {
 
         const user = await getUser(userId);
 
-       const role = (user?.role || "").toLowerCase().trim();
+      const role = (user?.role || "").toLowerCase().trim();
 
-const isSuperAdmin =
-    role === "admin" ||
-    userId === SUPER_ADMIN_ID;
+const isSuperAdmin = role === "admin";
 
-const canControl = isSuperAdmin || user.approved;
+const canControl = isSuperAdmin || user.approved === true;
 
 
         // ================= START =================
