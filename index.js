@@ -23,16 +23,28 @@ function logSystem(message) {
     console.log(`[${getThaiTime()}] ${message}`);
 }
 
+// ================= ENV CHECK =================
+const MONGO_URI = process.env.MONGO_URL;
+const CHANNEL_ACCESS_TOKEN = process.env.CHANNEL_ACCESS_TOKEN;
+const CHANNEL_SECRET = process.env.CHANNEL_SECRET;
+const ADMIN_ID = process.env.ADMIN_ID;
+
+console.log("MONGO_URI =", MONGO_URI);
+
 // ================= LINE =================
 const client = new Client({
-    channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
-    channelSecret: process.env.CHANNEL_SECRET
+    channelAccessToken: CHANNEL_ACCESS_TOKEN || "",
+    channelSecret: CHANNEL_SECRET || ""
 });
 
 // ================= MONGODB =================
-mongoose.connect(process.env.MONGO_URL)
-.then(() => console.log("MongoDB Connected"))
-.catch(err => console.log(err));
+if (MONGO_URI) {
+    mongoose.connect(MONGO_URI)
+        .then(() => console.log("MongoDB Connected"))
+        .catch(err => console.log("MongoDB Error:", err));
+} else {
+    console.log("❌ MONGO_URL is missing in Render ENV");
+}
 
 const userSchema = new mongoose.Schema({
     userId: String,
@@ -75,10 +87,12 @@ setInterval(() => {
 
         logSystem("ESP32 OFFLINE");
 
-        client.pushMessage(process.env.ADMIN_ID, {
-            type: 'text',
-            text: `❌ ESP32 OFFLINE\n🕒 ${getThaiTime()}`
-        }).catch(()=>{});
+        if (ADMIN_ID) {
+            client.pushMessage(ADMIN_ID, {
+                type: 'text',
+                text: `❌ ESP32 OFFLINE\n🕒 ${getThaiTime()}`
+            }).catch(() => {});
+        }
     }
 
 }, 5000);
@@ -136,72 +150,25 @@ app.post('/webhook', async (req, res) => {
         const userId = event.source.userId;
         const text = event.message?.text?.trim();
 
+        if (!userId || !text) return;
+
         const user = await getUser(userId);
         const isAdmin = user.role === "admin";
 
-        // ================= SET ADMIN =================
-        if (text?.startsWith("/setadmin")) {
-
-            if (!isAdmin) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "❌ ไม่มีสิทธิ์ตั้ง admin"
-                });
-            }
-
-            const targetId = text.split(" ")[1];
-
-            const target = await User.findOne({ userId: targetId });
-
-            if (!target) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "❌ ไม่พบ user นี้"
-                });
-            }
-
-            target.role = "admin";
-            await target.save();
-
+        // ================= STATUS =================
+        if (text === "สถานะ") {
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: `✅ ตั้ง admin แล้ว\n👤 ${targetId}`
-            });
-        }
-
-        // ================= UNSET ADMIN =================
-        if (text?.startsWith("/unsetadmin")) {
-
-            if (!isAdmin) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "❌ ไม่มีสิทธิ์"
-                });
-            }
-
-            const targetId = text.split(" ")[1];
-
-            const target = await User.findOne({ userId: targetId });
-
-            if (!target) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "❌ ไม่พบ user"
-                });
-            }
-
-            target.role = "user";
-            await target.save();
-
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: `🟡 ถอน admin แล้ว`
+                text:
+`📊 STATUS
+⚙️ ${motorData.state}
+👤 Role: ${user.role}
+🕒 ${getThaiTime()}`
             });
         }
 
         // ================= OPEN =================
         if (text === "เปิด") {
-
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
@@ -219,7 +186,6 @@ app.post('/webhook', async (req, res) => {
 
         // ================= CLOSE =================
         if (text === "ปิด") {
-
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
@@ -235,20 +201,6 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // ================= STATUS =================
-        if (text === "สถานะ") {
-
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text:
-`📊 STATUS
-⚙️ ${motorData.state}
-👤 Role: ${user.role}
-🕒 ${getThaiTime()}`
-            });
-        }
-
-        // ================= HELP =================
         return client.replyMessage(event.replyToken, {
             type: "text",
             text: helpMessage(user.role)
