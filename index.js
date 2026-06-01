@@ -96,21 +96,26 @@ setInterval(() => {
 
 // ================= INTRO =================
 function introMessage(user) {
+
     const isAdmin = user.userId === SUPER_ADMIN_ID;
     const canControl = isAdmin || user.approved;
 
     return `🤖 ระบบควบคุมมอเตอร์อัจฉริยะ
 
 ━━━━━━━━━━━━━━━━━━━━
-📡 SYSTEM READY
+📡 ESP32 + LINE CONTROL SYSTEM
 
-👤 สถานะ: ${isAdmin ? "ADMIN" : user.approved ? "APPROVED" : "WAIT"}
-
-⚙️ ${motorData.state}
-📶 ${isOnline() ? "ONLINE" : "OFFLINE"}
+👤 สิทธิ์: ${isAdmin ? "ADMIN" : user.approved ? "USER APPROVED" : "WAIT APPROVAL"}
 
 ━━━━━━━━━━━━━━━━━━━━
-${canControl ? "👉 เปิด / ปิด / สถานะ" : "👉 สถานะเท่านั้น"}
+📊 สถานะ:
+⚙️ ${motorData.state}
+📶 ${isOnline() ? "ONLINE" : "OFFLINE"}
+⚠️ Fault: ${motorData.fault ? "YES" : "NO"}
+
+━━━━━━━━━━━━━━━━━━━━
+📌 คำสั่ง:
+${!canControl ? "👉 ดูสถานะได้เท่านั้น" : "👉 เปิด / ปิด / สถานะ"}
 
 🕒 ${getThaiTime()}`;
 }
@@ -118,12 +123,53 @@ ${canControl ? "👉 เปิด / ปิด / สถานะ" : "👉 สถ�
 // ================= ADMIN MENU =================
 function adminMenu() {
     return `👑 ADMIN MENU
-👉 users
-👉 approve ID
-👉 revoke ID
+
+👉 users (ดูผู้ใช้)
+👉 approve ID (อนุมัติ)
+👉 revoke ID (ยกเลิก)
+👉 promote ID (ตั้งAdmin)
+👉 demote ID (ลดสิทธิ์)
 
 🕒 ${getThaiTime()}`;
 }
+
+// ================= REPORT =================
+app.post('/api/motor/report', (req, res) => {
+
+    const { state, faultCode } = req.body;
+
+    motorData.lastHeartbeat = Date.now();
+
+    if (state) motorData.state = state;
+
+    if (state === "FAULT") {
+        motorData.fault = true;
+        motorData.faultCode = faultCode || "UNKNOWN";
+    } else {
+        motorData.fault = false;
+        motorData.faultCode = null;
+    }
+
+    res.sendStatus(200);
+});
+
+// ================= COMMAND =================
+app.get('/api/motor/command', (req, res) => {
+
+    const cmd = motorCommand.cmd;
+
+    if (motorCommand.timestamp !== 0 &&
+        Date.now() - motorCommand.timestamp > 10000) {
+        motorCommand = { cmd: "NONE", timestamp: 0 };
+    }
+
+    res.json({
+        command: cmd,
+        state: motorData.state,
+        fault: motorData.fault,
+        faultCode: motorData.faultCode
+    });
+});
 
 // ================= WEBHOOK =================
 app.post('/webhook', async (req, res) => {
@@ -132,109 +178,90 @@ app.post('/webhook', async (req, res) => {
 
     for (const event of req.body.events || []) {
 
-        try {
+        const userId = event.source.userId;
+        const text = event.message?.text?.trim();
 
-            const userId = event.source.userId;
-            const text = event.message?.text?.trim();
+        if (!userId || !text) continue;
 
-            if (!userId || !text) continue;
+        const user = await getUser(userId);
 
-            const user = await getUser(userId);
-            const isSuperAdmin = userId === SUPER_ADMIN_ID;
-            const canControl = isSuperAdmin || user.approved;
+        const isSuperAdmin = userId === SUPER_ADMIN_ID;
+        const canControl = isSuperAdmin || user.approved;
 
-            // ================= START =================
-            if (text === "เริ่ม") {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: introMessage(user)
-                });
-            }
+        // ================= START =================
+        if (text === "เริ่ม") {
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: introMessage(user)
+            });
+        }
 
-            // ================= STATUS =================
-            if (text === "สถานะ") {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text:
-`📊 สถานะระบบ
+        // ================= STATUS =================
+        if (text === "สถานะ") {
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text:
+`📊 สถานะ
 ⚙️ ${motorData.state}
 📶 ${isOnline() ? "ONLINE" : "OFFLINE"}
 ⚠️ Fault: ${motorData.fault ? "YES" : "NO"}`
-                });
-            }
+            });
+        }
 
-            // ================= ADMIN =================
-            if (text === "admin") {
-                if (!isSuperAdmin) {
-                    return client.replyMessage(event.replyToken, {
-                        type: "text",
-                        text: "❌ ไม่มีสิทธิ์"
-                    });
-                }
+        // ================= OPEN =================
+        if (text === "เปิด") {
 
+            if (!canControl) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: adminMenu()
+                    text: "❌ ไม่มีสิทธิ์ควบคุม"
                 });
             }
 
-            // ================= OPEN =================
-            if (text === "เปิด") {
-
-                if (!canControl) {
-                    return client.replyMessage(event.replyToken, {
-                        type: "text",
-                        text: "❌ ไม่มีสิทธิ์"
-                    });
-                }
-
-                if (!isOnline()) {
-                    return client.replyMessage(event.replyToken, {
-                        type: "text",
-                        text: "⚠️ ระบบ OFFLINE"
-                    });
-                }
-
-                motorCommand = { cmd: "ON", timestamp: Date.now() };
-
+            if (!isOnline()) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "⚙️ ส่งเปิดแล้ว"
+                    text: "⚠️ ระบบ OFFLINE อยู่ (ESP32 ยังไม่ตอบ heartbeat)"
                 });
             }
 
-            // ================= FIXED CLOSE (IMPORTANT) =================
-            if (text === "ปิด") {
-
-                if (!canControl) {
-                    return client.replyMessage(event.replyToken, {
-                        type: "text",
-                        text: "❌ ไม่มีสิทธิ์"
-                    });
-                }
-
-                motorCommand = {
-                    cmd: "OFF",
-                    timestamp: Date.now()
-                };
-
-                // 🔥 FIX: บังคับ await + confirm response
-                await client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "🛑 ส่งคำสั่งปิดแล้ว"
-                });
-
-                continue; // กันหลุด flow
-            }
+            motorCommand = { cmd: "ON", timestamp: Date.now() };
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: "พิมพ์ 'เริ่ม'"
+                text: "⚙️ ส่งคำสั่งเปิดแล้ว"
             });
-
-        } catch (err) {
-            console.log("ERROR:", err.message);
         }
+
+        // ================= CLOSE (FIXED) =================
+        if (text === "ปิด") {
+
+            if (!canControl) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "❌ ไม่มีสิทธิ์ควบคุม"
+                });
+            }
+
+            if (!isOnline()) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: "⚠️ ระบบ OFFLINE อยู่ (คำสั่งจะค้างจนกว่า ESP32 จะออนไลน์)"
+                });
+            }
+
+            motorCommand = { cmd: "OFF", timestamp: Date.now() };
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: "🛑 ส่งคำสั่งปิดแล้ว"
+            });
+        }
+
+        return client.replyMessage(event.replyToken, {
+            type: "text",
+            text: "พิมพ์ 'เริ่ม' เพื่อใช้งาน"
+        });
     }
 });
 
