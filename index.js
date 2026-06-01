@@ -18,109 +18,85 @@ function getThaiTime() {
     });
 }
 
-// ================= ENV =================
-const MONGO_URL = process.env.MONGO_URL;
-const CHANNEL_ACCESS_TOKEN = process.env.CHANNEL_ACCESS_TOKEN;
-const CHANNEL_SECRET = process.env.CHANNEL_SECRET;
-
 // ================= LINE =================
 const client = new Client({
-    channelAccessToken: CHANNEL_ACCESS_TOKEN || "",
-    channelSecret: CHANNEL_SECRET || ""
+    channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN || "",
+    channelSecret: process.env.CHANNEL_SECRET || ""
 });
 
-// ================= MONGODB =================
-if (MONGO_URL) {
-    mongoose.connect(MONGO_URL)
-        .then(() => console.log("MongoDB Connected"))
-        .catch(err => console.log("MongoDB Error:", err));
-} else {
-    console.log("❌ MONGO_URL missing");
-}
-
-// ================= USER =================
-const userSchema = new mongoose.Schema({
+// ================= MONGODB USER =================
+const User = mongoose.model("User", new mongoose.Schema({
     userId: String,
     role: { type: String, default: "user" },
     createdAt: { type: Date, default: Date.now }
-});
-
-const User = mongoose.model("User", userSchema);
+}));
 
 async function getUser(userId) {
     let user = await User.findOne({ userId });
-    if (!user) {
-        user = await User.create({ userId });
-        console.log("NEW USER:", userId);
-    }
+    if (!user) user = await User.create({ userId });
     return user;
 }
 
-// ================= MOTOR STATE =================
+// ================= MOTOR SAFE STATE =================
 let motorData = {
-    state: "STANDBY",
+    state: "STOP",
     lastHeartbeat: 0,
     fault: false,
     faultCode: null
 };
 
-// ================= COMMAND QUEUE =================
-let commandQueue = [];
+// ================= COMMAND =================
+let motorCommand = {
+    cmd: "NONE",
+    timestamp: 0
+};
 
 // ================= ONLINE CHECK =================
 function isOnline() {
-    const timeout = 20000;
-    if (motorData.lastHeartbeat === 0) return false;
-    return (Date.now() - motorData.lastHeartbeat) < timeout;
+    return motorData.lastHeartbeat !== 0 &&
+        (Date.now() - motorData.lastHeartbeat) < 20000;
 }
 
-// ================= WATCHDOG =================
+// ================= WATCHDOG SAFETY =================
 setInterval(() => {
     const timeout = 30000;
 
-    if (
-        motorData.lastHeartbeat !== 0 &&
-        Date.now() - motorData.lastHeartbeat > timeout
-    ) {
-        motorData.state = "OFFLINE";
+    if (motorData.lastHeartbeat !== 0 &&
+        Date.now() - motorData.lastHeartbeat > timeout) {
+
+        motorData.state = "STOP";
         motorData.fault = true;
         motorData.faultCode = "WATCHDOG_TIMEOUT";
+
+        motorCommand = { cmd: "NONE", timestamp: 0 };
     }
 }, 5000);
 
-// ================= 🧠 SMART INTRO (THAI AI STYLE) =================
+// ================= INTRO MESSAGE =================
 function introMessage(isAdmin) {
-    return `🤖 สวัสดีครับ ยินดีต้อนรับสู่ระบบควบคุมมอเตอร์อัจฉริยะ
+    return `🤖 MOTOR CONTROL SYSTEM
 
 ━━━━━━━━━━━━━━━━━━━━
-📡 ระบบ: MOTOR CONTROL SYSTEM (IoT + LINE)
-⚙️ ควบคุม ESP32 แบบ Real-time
-━━━━━━━━━━━━━━━━━━━━
-
-🧠 ฟังก์ชันระบบ
-✔ เปิด / ปิดมอเตอร์
-✔ ตรวจสอบ ONLINE / OFFLINE
-✔ ตรวจจับ Fault อัตโนมัติ
-✔ Watchdog ป้องกันระบบค้าง
-✔ Command Queue ป้องกันคำสั่งหลุด
+📡 LINE + ESP32 REALTIME CONTROL
+⚙️ SYSTEM STATUS MONITOR
 
 ━━━━━━━━━━━━━━━━━━━━
-📊 คำสั่งใช้งาน
+📊 COMMANDS
+👉 เริ่ม
+👉 สถานะ
 👉 เปิด
 👉 ปิด
-👉 สถานะ
-${isAdmin ? "👉 admin (เมนูผู้ดูแล)\n👉 /users /approve /remove" : ""}
+${isAdmin ? "👉 admin (menu)\n👉 users / promote / demote" : ""}
 
 ━━━━━━━━━━━━━━━━━━━━
-📡 สถานะปัจจุบัน
+📡 STATUS
 ⚙️ ${motorData.state}
-📶 ${isOnline() ? "ONLINE ✅" : "OFFLINE ❌"}
-⚠️ Fault: ${motorData.fault ? "YES ❌" : "NO ✅"}
-🧾 Code: ${motorData.faultCode || "NORMAL"}
+📶 ${isOnline() ? "ONLINE" : "OFFLINE"}
+⚠️ Fault: ${motorData.fault ? "YES" : "NO"}
 
 🕒 ${getThaiTime()}
 
-💡 พิมพ์ “เปิด” หรือ “ปิด” เพื่อควบคุม`;
+💡 พิมพ์ “เปิด” หรือ “ปิด”`;
 }
 
 // ================= ADMIN MENU =================
@@ -131,29 +107,27 @@ function adminMenu() {
 👉 สถานะ
 👉 เปิด
 👉 ปิด
-
-👥 USER CONTROL
-👉 /users
-👉 /approve ID
-👉 /remove ID
+👉 users
+👉 promote ID
+👉 demote ID
 
 ━━━━━━━━━━━━━━━━━━━━
-📡 SYSTEM ACTIVE
-✔ Queue Enabled
-✔ Watchdog Enabled
-✔ Real-time ESP32 Control
+🧠 SYSTEM ACTIVE
+✔ Watchdog ON
+✔ Safe STOP MODE
+✔ ACK READY
 
 🕒 ${getThaiTime()}`;
 }
 
 // ================= ESP32 REPORT =================
 app.post('/api/motor/report', (req, res) => {
+
     const { state, faultCode } = req.body;
 
-    if (state) {
-        motorData.state = state;
-        motorData.lastHeartbeat = Date.now();
-    }
+    motorData.lastHeartbeat = Date.now();
+
+    if (state) motorData.state = state;
 
     if (state === "FAULT") {
         motorData.fault = true;
@@ -169,10 +143,12 @@ app.post('/api/motor/report', (req, res) => {
 // ================= ESP32 COMMAND =================
 app.get('/api/motor/command', (req, res) => {
 
-    let cmd = "NONE";
+    const cmd = motorCommand.cmd;
 
-    if (commandQueue.length > 0) {
-        cmd = commandQueue.shift();
+    if (motorCommand.timestamp !== 0 &&
+        Date.now() - motorCommand.timestamp > 10000) {
+
+        motorCommand = { cmd: "NONE", timestamp: 0 };
     }
 
     res.json({
@@ -197,22 +173,35 @@ app.post('/webhook', async (req, res) => {
 
         const user = await getUser(userId);
         const isAdmin = user.role === "admin";
-        const online = isOnline();
 
-        // ===== START =====
-        if (["เริ่ม", "สวัสดี", "menu"].includes(text)) {
+        // ================= START =================
+        if (text === "เริ่ม") {
             return client.replyMessage(event.replyToken, {
                 type: "text",
                 text: introMessage(isAdmin)
             });
         }
 
-        // ===== ADMIN =====
+        // ================= STATUS =================
+        if (text === "สถานะ") {
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text:
+`📊 STATUS
+⚙️ ${motorData.state}
+📶 ${isOnline() ? "ONLINE" : "OFFLINE"}
+⚠️ Fault: ${motorData.fault ? "YES" : "NO"}
+🧾 Code: ${motorData.faultCode || "NORMAL"}`
+            });
+        }
+
+        // ================= ADMIN MENU =================
         if (text === "admin") {
+
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ไม่มีสิทธิ์เข้าถึง"
+                    text: "❌ ไม่มีสิทธิ์"
                 });
             }
 
@@ -222,60 +211,94 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // ===== STATUS =====
-        if (text === "สถานะ") {
+        // ================= USERS =================
+        if (text === "users") {
+
+            if (!isAdmin) return;
+
+            const users = await User.find().limit(10);
+
+            const list = users.map(u =>
+                `${u.userId} | ${u.role}`
+            ).join("\n");
+
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text:
-`📊 STATUS
-⚙️ ${motorData.state}
-📡 ${online ? "ONLINE ✅" : "OFFLINE ❌"}
-⚠️ Fault: ${motorData.fault ? "YES ❌" : "NO ✅"}
-🧾 Code: ${motorData.faultCode || "NORMAL"}
-👤 Role: ${user.role}
-🕒 ${getThaiTime()}`
+                text: `👥 USERS\n\n${list || "ไม่มีข้อมูล"}`
             });
         }
 
-        // ===== OPEN =====
+        // ================= PROMOTE =================
+        if (text.startsWith("promote ")) {
+
+            const id = text.split(" ")[1];
+
+            await User.updateOne({ userId: id }, { role: "admin" });
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: `✅ Promote: ${id}`
+            });
+        }
+
+        // ================= DEMOTE =================
+        if (text.startsWith("demote ")) {
+
+            const id = text.split(" ")[1];
+
+            await User.updateOne({ userId: id }, { role: "user" });
+
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: `⬇️ Demote: ${id}`
+            });
+        }
+
+        // ================= OPEN =================
         if (text === "เปิด") {
 
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ เฉพาะ ADMIN เท่านั้น"
+                    text: "❌ ไม่มีสิทธิ์"
                 });
             }
 
-            commandQueue.push("ON");
+            motorCommand = {
+                cmd: "ON",
+                timestamp: Date.now()
+            };
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: "⚙️ ส่งคำสั่ง ON แล้ว"
+                text: "⚙️ ส่ง ON แล้ว (รอ ESP32)"
             });
         }
 
-        // ===== CLOSE =====
+        // ================= CLOSE =================
         if (text === "ปิด") {
 
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ เฉพาะ ADMIN เท่านั้น"
+                    text: "❌ ไม่มีสิทธิ์"
                 });
             }
 
-            commandQueue.push("OFF");
+            motorCommand = {
+                cmd: "OFF",
+                timestamp: Date.now()
+            };
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: "🛑 ส่งคำสั่ง OFF แล้ว"
+                text: "🛑 ส่ง OFF แล้ว (รอ ESP32)"
             });
         }
 
         return client.replyMessage(event.replyToken, {
             type: "text",
-            text: "📘 MOTOR SYSTEM\n👉 พิมพ์ 'เริ่ม'"
+            text: "พิมพ์ 'เริ่ม' เพื่อใช้งานระบบ"
         });
     }
 });
