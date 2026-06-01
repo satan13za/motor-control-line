@@ -95,7 +95,7 @@ setInterval(() => {
 
 }, 5000);
 
-// ================= REPORT FROM ESP32 =================
+// ================= REPORT =================
 app.post('/api/motor/report', (req, res) => {
 
     const { state, error } = req.body;
@@ -105,27 +105,24 @@ app.post('/api/motor/report', (req, res) => {
     motorData.lastHeartbeat = Date.now();
     motorData.isOffline = false;
 
-    // ================= NORMAL =================
     if (state === "RUN" || state === "STOP") {
         motorData.fault = false;
         motorData.faultCode = null;
         logSystem(`STATE -> ${state}`);
     }
 
-    // ================= FAULT =================
     if (state === "FAULT") {
-
         motorData.fault = true;
         motorData.faultCode = error || "UNKNOWN";
 
-        logSystem(`⚠️ FAULT -> ${error}`);
+        logSystem(`FAULT -> ${error}`);
 
         if (ADMIN_ID) {
             client.pushMessage(ADMIN_ID, {
                 type: "text",
                 text:
 `🚨 MOTOR FAULT
-❌ Code: ${motorData.faultCode}
+❌ ${motorData.faultCode}
 🕒 ${getThaiTime()}`
             }).catch(() => {});
         }
@@ -150,11 +147,31 @@ app.get('/api/motor/command', (req, res) => {
     if (cmd !== "NONE") motorCommand = "NONE";
 });
 
-// ================= STATUS MESSAGE =================
+// ================= INTRO SYSTEM =================
+function introMessage() {
+    return `👋 สวัสดี ยินดีต้อนรับสู่ MOTOR CONTROL SYSTEM
+
+📘 ระบบนี้ใช้สำหรับ:
+- ควบคุมมอเตอร์ผ่าน LINE
+- ตรวจสอบสถานะเครื่องจักร Real-time
+- แจ้งเตือน ESP32 Offline
+- แจ้งเตือน MOTOR FAULT (OVERLOAD / CONTACTOR)
+
+⚙️ คำสั่ง:
+👉 เปิด
+👉 ปิด
+👉 สถานะ
+
+🕒 ${getThaiTime()}
+`;
+}
+
+// ================= HELP =================
 function helpMessage(role) {
     return `📘 MOTOR SYSTEM
 
 📊 สถานะ = ดูระบบ
+🆕 พิมพ์ "เริ่ม" เพื่อดูคู่มือ
 
 ${role === "admin"
 ? "🔐 ADMIN:\n👉 เปิด\n👉 ปิด"
@@ -177,6 +194,14 @@ app.post('/webhook', async (req, res) => {
 
         const user = await getUser(userId);
         const isAdmin = user.role === "admin";
+
+        // ================= INTRO =================
+        if (text === "เริ่ม" || text === "เมนู" || text === "help") {
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: introMessage()
+            });
+        }
 
         // ================= STATUS =================
         if (text === "สถานะ") {
@@ -206,14 +231,14 @@ app.post('/webhook', async (req, res) => {
             if (motorData.isOffline) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: `⚠️ ESP32 OFFLINE`
+                    text: "⚠️ ESP32 OFFLINE"
                 });
             }
 
             if (motorData.fault) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: `⚠️ ไม่สามารถสั่งได้ (FAULT)\n${motorData.faultCode}`
+                    text: `⚠️ FAULT ACTIVE\n${motorData.faultCode}`
                 });
             }
 
@@ -221,9 +246,7 @@ app.post('/webhook', async (req, res) => {
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text:
-`⚙️ สั่งเปิดแล้ว
-🕒 ${getThaiTime()}`
+                text: `⚙️ สั่งเปิดแล้ว\n🕒 ${getThaiTime()}`
             });
         }
 
@@ -240,14 +263,14 @@ app.post('/webhook', async (req, res) => {
             if (motorData.isOffline) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: `⚠️ ESP32 OFFLINE`
+                    text: "⚠️ ESP32 OFFLINE"
                 });
             }
 
             if (motorData.fault) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: `⚠️ ไม่สามารถสั่งได้ (FAULT)\n${motorData.faultCode}`
+                    text: `⚠️ FAULT ACTIVE\n${motorData.faultCode}`
                 });
             }
 
@@ -255,9 +278,7 @@ app.post('/webhook', async (req, res) => {
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text:
-`🛑 สั่งปิดแล้ว
-🕒 ${getThaiTime()}`
+                text: `🛑 สั่งปิดแล้ว\n🕒 ${getThaiTime()}`
             });
         }
 
