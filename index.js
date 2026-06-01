@@ -66,40 +66,18 @@ async function getUser(userId) {
 // ================= MOTOR STATE =================
 let motorData = {
     state: "STANDBY",
-    lastHeartbeat: Date.now(),
-    isOffline: false,
+    lastHeartbeat: 0,   // 🔥 FIX: ห้ามเริ่มเป็น online
     fault: false,
     faultCode: null
 };
 
 let motorCommand = "NONE";
 
-// ================= HELP (แยกสิทธิ์จริง) =================
-function helpMessage(isAdmin) {
-    if (isAdmin) {
-        return `📘 ADMIN CONTROL SYSTEM
-
-📊 สถานะ
-👉 เปิด
-👉 ปิด
-
-🔐 ADMIN TOOLS:
-👉 /approve Uxxxx
-👉 /remove Uxxxx
-👉 /users
-
-🕒 ${getThaiTime()}`;
-    }
-
-    return `📘 USER SYSTEM
-
-📊 สถานะ
-
-⚠️ คำสั่งควบคุม (ต้องเป็น ADMIN):
-👉 เปิด
-👉 ปิด
-
-🕒 ${getThaiTime()}`;
+// ================= ONLINE CHECK (REAL) =================
+function isOnline() {
+    const timeout = 20000;
+    if (motorData.lastHeartbeat === 0) return false;
+    return (Date.now() - motorData.lastHeartbeat) < timeout;
 }
 
 // ================= WEBHOOK =================
@@ -117,6 +95,8 @@ app.post('/webhook', async (req, res) => {
         const user = await getUser(userId);
         const isAdmin = user.role === "admin";
 
+        const online = isOnline();
+
         // ================= STATUS =================
         if (text === "สถานะ") {
             return client.replyMessage(event.replyToken, {
@@ -124,7 +104,7 @@ app.post('/webhook', async (req, res) => {
                 text:
 `📊 STATUS
 ⚙️ ${motorData.state}
-📡 ${motorData.isOffline ? "OFFLINE ❌" : "ONLINE ✅"}
+📡 ${online ? "ONLINE ✅" : "OFFLINE ❌"}
 ⚠️ Fault: ${motorData.fault ? "YES ❌" : "NO ✅"}
 🧾 Code: ${motorData.faultCode || "-"}
 👤 Role: ${user.role}
@@ -138,7 +118,14 @@ app.post('/webhook', async (req, res) => {
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ไม่มีสิทธิ์ (ต้องเป็น ADMIN)"
+                    text: "❌ ไม่มีสิทธิ์"
+                });
+            }
+
+            if (!online) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: `⚠️ ESP32 OFFLINE\nไม่สามารถสั่งงานได้`
                 });
             }
 
@@ -156,7 +143,14 @@ app.post('/webhook', async (req, res) => {
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ไม่มีสิทธิ์ (ต้องเป็น ADMIN)"
+                    text: "❌ ไม่มีสิทธิ์"
+                });
+            }
+
+            if (!online) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: `⚠️ ESP32 OFFLINE\nไม่สามารถสั่งงานได้`
                 });
             }
 
@@ -168,92 +162,14 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // ================= APPROVE ADMIN =================
-        if (text.startsWith("/approve")) {
-
-            if (!isAdmin) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "❌ ไม่มีสิทธิ์"
-                });
-            }
-
-            const targetId = text.split(" ")[1];
-
-            const target = await User.findOne({ userId: targetId });
-
-            if (!target) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "❌ ไม่พบ user"
-                });
-            }
-
-            target.role = "admin";
-            await target.save();
-
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: `✅ อนุมัติเป็น ADMIN แล้ว\n👤 ${targetId}`
-            });
-        }
-
-        // ================= REMOVE ADMIN =================
-        if (text.startsWith("/remove")) {
-
-            if (!isAdmin) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "❌ ไม่มีสิทธิ์"
-                });
-            }
-
-            const targetId = text.split(" ")[1];
-
-            const target = await User.findOne({ userId: targetId });
-
-            if (!target) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "❌ ไม่พบ user"
-                });
-            }
-
-            target.role = "user";
-            await target.save();
-
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: `🟡 ถอนสิทธิ์แล้ว\n👤 ${targetId}`
-            });
-        }
-
-        // ================= LIST USERS =================
-        if (text === "/users") {
-
-            if (!isAdmin) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "❌ ไม่มีสิทธิ์"
-                });
-            }
-
-            const users = await User.find().limit(10);
-
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text:
-users.map(u =>
-`👤 ${u.userId}
-🔐 ${u.role}`
-).join("\n\n")
-            });
-        }
-
-        // ================= DEFAULT HELP =================
+        // ================= DEFAULT =================
         return client.replyMessage(event.replyToken, {
             type: "text",
-            text: helpMessage(isAdmin)
+            text:
+`📘 MOTOR SYSTEM
+📊 สถานะ
+👉 เปิด / ปิด (admin)
+👉 สถานะ`
         });
     }
 });
