@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 const app = express();
 app.use(express.json());
 
-// ================= TIME THAILAND =================
+// ================= TIME =================
 function getThaiTime() {
     return new Date().toLocaleString("th-TH", {
         timeZone: "Asia/Bangkok",
@@ -19,17 +19,15 @@ function getThaiTime() {
 }
 
 // ================= LOG =================
-function logSystem(message) {
-    console.log(`[${getThaiTime()}] ${message}`);
+function logSystem(msg) {
+    console.log(`[${getThaiTime()}] ${msg}`);
 }
 
 // ================= ENV =================
-const MONGO_URI = process.env.MONGO_URL;
+const MONGO_URL = process.env.MONGO_URL;
 const CHANNEL_ACCESS_TOKEN = process.env.CHANNEL_ACCESS_TOKEN;
 const CHANNEL_SECRET = process.env.CHANNEL_SECRET;
 const ADMIN_ID = process.env.ADMIN_ID;
-
-console.log("MONGO_URI =", MONGO_URI);
 
 // ================= LINE =================
 const client = new Client({
@@ -38,15 +36,15 @@ const client = new Client({
 });
 
 // ================= MONGODB =================
-if (MONGO_URI) {
-    mongoose.connect(MONGO_URI)
+if (MONGO_URL) {
+    mongoose.connect(MONGO_URL)
         .then(() => console.log("MongoDB Connected"))
         .catch(err => console.log("MongoDB Error:", err));
 } else {
-    console.log("❌ MONGO_URL is missing");
+    console.log("❌ MONGO_URL missing");
 }
 
-// ================= DB =================
+// ================= USER =================
 const userSchema = new mongoose.Schema({
     userId: String,
     role: { type: String, default: "user" },
@@ -57,20 +55,20 @@ const User = mongoose.model("User", userSchema);
 
 async function getUser(userId) {
     let user = await User.findOne({ userId });
-
     if (!user) {
         user = await User.create({ userId });
         console.log("NEW USER:", userId);
     }
-
     return user;
 }
 
-// ================= STATE =================
+// ================= MOTOR STATE =================
 let motorData = {
     state: "STANDBY",
     lastHeartbeat: Date.now(),
-    isOffline: false
+    isOffline: false,
+    fault: false,
+    faultCode: null
 };
 
 let motorCommand = "NONE";
@@ -97,22 +95,46 @@ setInterval(() => {
 
 }, 5000);
 
-// ================= REPORT (ESP32) =================
+// ================= REPORT FROM ESP32 =================
 app.post('/api/motor/report', (req, res) => {
 
-    const { state } = req.body;
+    const { state, error } = req.body;
     if (!state) return res.sendStatus(200);
 
     motorData.state = state;
     motorData.lastHeartbeat = Date.now();
     motorData.isOffline = false;
 
-    logSystem(`REPORT -> ${state}`);
+    // ================= NORMAL =================
+    if (state === "RUN" || state === "STOP") {
+        motorData.fault = false;
+        motorData.faultCode = null;
+        logSystem(`STATE -> ${state}`);
+    }
+
+    // ================= FAULT =================
+    if (state === "FAULT") {
+
+        motorData.fault = true;
+        motorData.faultCode = error || "UNKNOWN";
+
+        logSystem(`⚠️ FAULT -> ${error}`);
+
+        if (ADMIN_ID) {
+            client.pushMessage(ADMIN_ID, {
+                type: "text",
+                text:
+`🚨 MOTOR FAULT
+❌ Code: ${motorData.faultCode}
+🕒 ${getThaiTime()}`
+            }).catch(() => {});
+        }
+    }
 
     res.sendStatus(200);
 });
 
-// ================= COMMAND (ESP32) =================
+// ================= COMMAND =================
 app.get('/api/motor/command', (req, res) => {
 
     const cmd = motorCommand;
@@ -120,13 +142,15 @@ app.get('/api/motor/command', (req, res) => {
     res.json({
         command: cmd,
         state: motorData.state,
+        fault: motorData.fault,
+        faultCode: motorData.faultCode,
         time: getThaiTime()
     });
 
     if (cmd !== "NONE") motorCommand = "NONE";
 });
 
-// ================= HELP =================
+// ================= STATUS MESSAGE =================
 function helpMessage(role) {
     return `📘 MOTOR SYSTEM
 
@@ -136,8 +160,7 @@ ${role === "admin"
 ? "🔐 ADMIN:\n👉 เปิด\n👉 ปิด"
 : "🔒 USER (ดูได้อย่างเดียว)"}
 
-🕒 ${getThaiTime()}
-`;
+🕒 ${getThaiTime()}`;
 }
 
 // ================= WEBHOOK =================
@@ -163,6 +186,8 @@ app.post('/webhook', async (req, res) => {
 `📊 STATUS
 ⚙️ ${motorData.state}
 📡 ${motorData.isOffline ? "OFFLINE ❌" : "ONLINE ✅"}
+⚠️ Fault: ${motorData.fault ? "YES ❌" : "NO ✅"}
+🧾 Code: ${motorData.faultCode || "-"}
 👤 Role: ${user.role}
 🕒 ${getThaiTime()}`
             });
@@ -181,10 +206,14 @@ app.post('/webhook', async (req, res) => {
             if (motorData.isOffline) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text:
-`⚠️ เปิดไม่ได้
-❌ ESP32 OFFLINE
-🕒 ${getThaiTime()}`
+                    text: `⚠️ ESP32 OFFLINE`
+                });
+            }
+
+            if (motorData.fault) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: `⚠️ ไม่สามารถสั่งได้ (FAULT)\n${motorData.faultCode}`
                 });
             }
 
@@ -194,7 +223,6 @@ app.post('/webhook', async (req, res) => {
                 type: "text",
                 text:
 `⚙️ สั่งเปิดแล้ว
-📡 ESP32 ONLINE
 🕒 ${getThaiTime()}`
             });
         }
@@ -212,10 +240,14 @@ app.post('/webhook', async (req, res) => {
             if (motorData.isOffline) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text:
-`⚠️ ปิดไม่ได้
-❌ ESP32 OFFLINE
-🕒 ${getThaiTime()}`
+                    text: `⚠️ ESP32 OFFLINE`
+                });
+            }
+
+            if (motorData.fault) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: `⚠️ ไม่สามารถสั่งได้ (FAULT)\n${motorData.faultCode}`
                 });
             }
 
@@ -225,7 +257,6 @@ app.post('/webhook', async (req, res) => {
                 type: "text",
                 text:
 `🛑 สั่งปิดแล้ว
-📡 ESP32 ONLINE
 🕒 ${getThaiTime()}`
             });
         }
