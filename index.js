@@ -95,13 +95,20 @@ function isOnline() {
 function adminMenu() {
     return `👑 เมนูผู้ดูแลระบบ
 
-📌 คำสั่ง:
-users
-approve USER_ID
-revoke USER_ID
-promote USER_ID
-demote USER_ID
+📋 users
+ดูรายชื่อผู้ใช้ทั้งหมด
 
+✅ approve
+อนุมัติให้ควบคุมระบบ
+
+🛑 revoke
+ยกเลิกสิทธิ์ควบคุม
+
+👑 promote
+ตั้งเป็นแอดมิน
+
+⬇️ demote
+ลดสิทธิ์แอดมิน
 ━━━━━━━━━━━━━━
 🕒 ${getThaiTime()}`;
 }
@@ -118,9 +125,9 @@ function introMessage(user, isAdmin) {
 
 ━━━━━━━━━━━━━━━━━━━━
 📊 สถานะ:
-⚙️ ${motorData.state}
-📶 ${isOnline() ? "ONLINE" : "OFFLINE"}
-⚠️ Fault: ${motorData.fault ? "YES" : "NO"}
+⚙️ มอเตอร์: ${motorData.state}
+📶 อุปกรณ์: ${isOnline() ? "ออนไลน์" : "ออฟไลน์"}
+⚠️ Fault: ${motorData.fault ? "ผิดปกติ" : "ปกติ"}
 
 ━━━━━━━━━━━━━━━━━━━━
 📌 คำสั่ง:
