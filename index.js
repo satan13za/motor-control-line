@@ -18,11 +18,6 @@ function getThaiTime() {
     });
 }
 
-// ================= LOG =================
-function logSystem(msg) {
-    console.log(`[${getThaiTime()}] ${msg}`);
-}
-
 // ================= ENV =================
 const MONGO_URL = process.env.MONGO_URL;
 const CHANNEL_ACCESS_TOKEN = process.env.CHANNEL_ACCESS_TOKEN;
@@ -82,49 +77,26 @@ function isOnline() {
 
 // ================= INTRO =================
 function introMessage(isAdmin) {
-    return `👋 สวัสดี ยินดีต้อนรับสู่ MOTOR CONTROL SYSTEM
+    if (isAdmin) {
+        return `👑 ADMIN SYSTEM
 
-📘 ระบบนี้ใช้สำหรับ:
-- ควบคุมมอเตอร์ผ่าน LINE
-- ตรวจสอบสถานะเครื่องจักร
-- แจ้งเตือน ESP32 Offline
-- แจ้งเตือน Fault
-
-⚙️ คำสั่ง:
-👉 สถานะ
-👉 เปิด / ปิด ${isAdmin ? '(Admin)' : ''}
-
-📡 ระบบอัตโนมัติทำงานตลอด
+⚙️ ควบคุมมอเตอร์
+📊 สถานะ
+👥 จัดการผู้ใช้ (admin menu)
 
 🕒 ${getThaiTime()}`;
-}
+    }
 
-// ================= ADMIN MENU =================
-function adminMenu() {
-    return {
-        type: "text",
-        text: `👑 ADMIN MENU`,
-        quickReply: {
-            items: [
-                {
-                    type: "action",
-                    action: { type: "message", label: "📊 สถานะ", text: "สถานะ" }
-                },
-                {
-                    type: "action",
-                    action: { type: "message", label: "▶️ เปิด", text: "เปิด" }
-                },
-                {
-                    type: "action",
-                    action: { type: "message", label: "⛔ ปิด", text: "ปิด" }
-                },
-                {
-                    type: "action",
-                    action: { type: "message", label: "👑 Menu", text: "menu" }
-                }
-            ]
-        }
-    };
+    return `👤 USER SYSTEM
+
+📊 คำสั่งที่ใช้ได้:
+👉 สถานะ
+👉 เปิด
+👉 ปิด
+
+⚠️ คำสั่ง admin ใช้ไม่ได้
+
+🕒 ${getThaiTime()}`;
 }
 
 // ================= WEBHOOK =================
@@ -152,17 +124,31 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
+        // ================= BLOCK ADMIN COMMAND FOR USER =================
+        const adminCommands = ["/approve", "/remove", "/users", "menu", "admin"];
+
+        if (!isAdmin && adminCommands.some(cmd => text.startsWith(cmd))) {
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text: "❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้"
+            });
+        }
+
         // ================= ADMIN MENU =================
-        if (text === "admin" || text === "menu") {
+        if (text === "menu" || text === "admin") {
 
-            if (!isAdmin) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "❌ ไม่มีสิทธิ์เข้า ADMIN MENU"
-                });
-            }
+            return client.replyMessage(event.replyToken, {
+                type: "text",
+                text:
+`👑 ADMIN MENU
 
-            return client.replyMessage(event.replyToken, adminMenu());
+📊 สถานะ
+▶️ เปิด
+⛔ ปิด
+👥 /users
+➕ /approve
+➖ /remove`
+            });
         }
 
         // ================= STATUS =================
@@ -174,7 +160,7 @@ app.post('/webhook', async (req, res) => {
 ⚙️ ${motorData.state}
 📡 ${online ? "ONLINE ✅" : "OFFLINE ❌"}
 ⚠️ Fault: ${motorData.fault ? "YES ❌" : "NO ✅"}
-🧾 Code: ${motorData.faultCode ? motorData.faultCode : "NORMAL"}
+🧾 Code: ${motorData.faultCode || "NORMAL"}
 👤 Role: ${user.role}
 🕒 ${getThaiTime()}`
             });
@@ -186,7 +172,7 @@ app.post('/webhook', async (req, res) => {
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ไม่มีสิทธิ์"
+                    text: "❌ เฉพาะ ADMIN เท่านั้น"
                 });
             }
 
@@ -211,7 +197,7 @@ app.post('/webhook', async (req, res) => {
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ไม่มีสิทธิ์"
+                    text: "❌ เฉพาะ ADMIN เท่านั้น"
                 });
             }
 
@@ -235,13 +221,12 @@ app.post('/webhook', async (req, res) => {
             type: "text",
             text:
 `📘 MOTOR SYSTEM
-👉 พิมพ์ "เริ่ม"
-👉 พิมพ์ "menu" (admin)`
+👉 พิมพ์ "เริ่ม"`
         });
     }
 });
 
 // ================= START =================
 app.listen(10000, () => {
-    logSystem("SERVER STARTED");
+    console.log("SERVER STARTED");
 });
