@@ -58,7 +58,7 @@ async function getUser(userId) {
     return user;
 }
 
-// ================= MOTOR STATE =================
+// ================= MOTOR STATE (FULL FIXED) =================
 let motorData = {
     state: "STANDBY",
     lastHeartbeat: 0,
@@ -80,8 +80,8 @@ function introMessage(isAdmin) {
     return `👋 ยินดีต้อนรับ MOTOR CONTROL SYSTEM
 
 📘 ระบบควบคุมมอเตอร์ผ่าน LINE
-📡 ตรวจสอบสถานะ ESP32 แบบ Real-time
-⚠️ แจ้งเตือน Offline / Fault
+📡 ตรวจสอบ ESP32 แบบ Real-time
+⚠️ แจ้งเตือน OFFLINE / FAULT
 
 📊 คำสั่ง:
 👉 สถานะ
@@ -94,18 +94,56 @@ function introMessage(isAdmin) {
 function adminMenu() {
     return `👑 ADMIN MENU
 
-📊 คำสั่งระบบ:
+📊 คำสั่ง:
 👉 สถานะ
 👉 เปิด
 👉 ปิด
 
-👥 จัดการผู้ใช้:
+👥 USER:
 👉 /users
-👉 /approve USER_ID
-👉 /remove USER_ID
+👉 /approve ID
+👉 /remove ID
 
 🕒 ${getThaiTime()}`;
 }
+
+// ================= 🔥 ESP32 REPORT =================
+app.post('/api/motor/report', (req, res) => {
+
+    const { state, faultCode } = req.body;
+
+    if (state) {
+        motorData.state = state;
+        motorData.lastHeartbeat = Date.now();
+    }
+
+    if (state === "FAULT") {
+        motorData.fault = true;
+        motorData.faultCode = faultCode || "UNKNOWN";
+    } else {
+        motorData.fault = false;
+        motorData.faultCode = null;
+    }
+
+    res.sendStatus(200);
+});
+
+// ================= 🔥 ESP32 COMMAND =================
+app.get('/api/motor/command', (req, res) => {
+
+    const cmd = motorCommand;
+
+    if (cmd !== "NONE") {
+        motorCommand = "NONE";
+    }
+
+    res.json({
+        command: cmd,
+        state: motorData.state,
+        fault: motorData.fault,
+        faultCode: motorData.faultCode
+    });
+});
 
 // ================= WEBHOOK =================
 app.post('/webhook', async (req, res) => {
@@ -121,11 +159,10 @@ app.post('/webhook', async (req, res) => {
 
         const user = await getUser(userId);
         const isAdmin = user.role === "admin";
-
         const online = isOnline();
 
         // ================= INTRO =================
-        if (text === "เริ่ม" || text === "สวัสดี" || text === "menu") {
+        if (["เริ่ม", "สวัสดี", "menu"].includes(text)) {
             return client.replyMessage(event.replyToken, {
                 type: "text",
                 text: introMessage(isAdmin)
@@ -133,86 +170,17 @@ app.post('/webhook', async (req, res) => {
         }
 
         // ================= ADMIN MENU =================
-        if (text === "admin" || text === "menu") {
-
+        if (text === "admin") {
             if (!isAdmin) {
                 return client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: "❌ ไม่มีสิทธิ์เข้าถึง ADMIN MENU"
+                    text: "❌ ไม่มีสิทธิ์"
                 });
             }
 
             return client.replyMessage(event.replyToken, {
                 type: "text",
                 text: adminMenu()
-            });
-        }
-
-        // ================= BLOCK ADMIN COMMAND =================
-        const adminCommands = ["/approve", "/remove", "/users"];
-
-        if (!isAdmin && adminCommands.some(cmd => text.startsWith(cmd))) {
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: "❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้"
-            });
-        }
-
-        // ================= USERS =================
-        if (text === "/users") {
-
-            const users = await User.find().limit(10);
-
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: users.map(u =>
-`👤 ${u.userId}
-🔐 ${u.role}`
-                ).join("\n\n")
-            });
-        }
-
-        // ================= APPROVE =================
-        if (text.startsWith("/approve")) {
-
-            const targetId = text.split(" ")[1];
-            const target = await User.findOne({ userId: targetId });
-
-            if (!target) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "❌ ไม่พบ user"
-                });
-            }
-
-            target.role = "admin";
-            await target.save();
-
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: `✅ อนุมัติเป็น ADMIN แล้ว\n👤 ${targetId}`
-            });
-        }
-
-        // ================= REMOVE =================
-        if (text.startsWith("/remove")) {
-
-            const targetId = text.split(" ")[1];
-            const target = await User.findOne({ userId: targetId });
-
-            if (!target) {
-                return client.replyMessage(event.replyToken, {
-                    type: "text",
-                    text: "❌ ไม่พบ user"
-                });
-            }
-
-            target.role = "user";
-            await target.save();
-
-            return client.replyMessage(event.replyToken, {
-                type: "text",
-                text: `🟡 ถอนสิทธิ์แล้ว\n👤 ${targetId}`
             });
         }
 
@@ -281,13 +249,9 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // ================= DEFAULT =================
         return client.replyMessage(event.replyToken, {
             type: "text",
-            text:
-`📘 MOTOR SYSTEM
-👉 พิมพ์ "เริ่ม" เพื่อดูระบบ
-👉 admin เพื่อเข้าเมนู (ถ้าเป็น admin)`
+            text: "📘 MOTOR SYSTEM\n👉 พิมพ์ 'เริ่ม'"
         });
     }
 });
