@@ -64,9 +64,9 @@ async function getUser(userId) {
             role: "user",
             approved: false
         });
-    } else {
-        if (!user.role) user.role = "user";
     }
+
+    if (!user.role) user.role = "user";
 
     return user;
 }
@@ -91,33 +91,30 @@ function isOnline() {
         (Date.now() - motorData.lastHeartbeat) < 20000;
 }
 
-// ================= WATCHDOG =================
-setInterval(() => {
-    const timeout = 30000;
+// ================= ADMIN MENU (THAI) =================
+function adminMenu() {
+    return `👑 เมนูผู้ดูแลระบบ
 
-    if (motorData.lastHeartbeat !== 0 &&
-        Date.now() - motorData.lastHeartbeat > timeout) {
+📌 คำสั่ง:
+- users = ดูผู้ใช้ทั้งหมด
+- approve = อนุมัติผู้ใช้
+- revoke = ยกเลิกผู้ใช้
+- promote = ตั้งแอดมิน
+- demote = ลดสิทธิ์แอดมิน
 
-        motorData.state = "STOP";
-        motorData.fault = true;
-        motorData.faultCode = "WATCHDOG_TIMEOUT";
-
-        motorCommand = { cmd: "NONE", timestamp: 0 };
-    }
-}, 5000);
+━━━━━━━━━━━━━━
+🕒 ${getThaiTime()}`;
+}
 
 // ================= INTRO =================
-function introMessage(user) {
+function introMessage(user, isAdmin) {
 
-    const isAdmin = user?.role?.toLowerCase?.() === "admin";
     const canControl = isAdmin || user?.approved === true;
 
     return `🤖 ระบบควบคุมมอเตอร์อัจฉริยะ
 
 ━━━━━━━━━━━━━━━━━━━━
-📡 ESP32 + LINE CONTROL SYSTEM
-
-👤 สิทธิ์: ${isAdmin ? "ADMIN" : user?.approved ? "USER APPROVED" : "WAIT APPROVAL"}
+👤 สิทธิ์: ${isAdmin ? "👑 ADMIN" : user?.approved ? "USER APPROVED" : "USER VIEW ONLY"}
 
 ━━━━━━━━━━━━━━━━━━━━
 📊 สถานะ:
@@ -146,25 +143,29 @@ app.post('/webhook', async (req, res) => {
 
         const user = await getUser(userId);
 
-        // ❌ FIX: กัน user null
-        if (!user) {
-            console.log("USER NOT READY:", userId);
-            return;
-        }
+        if (!user) return;
 
         const role = (user?.role || "").toLowerCase().trim();
 
-        const isSuperAdmin =
-            role === "admin" ||
+        // ✅ FIX: admin ตรวจจาก ENV เท่านั้น (กัน user ปลอม role)
+        const isAdmin =
             userId === SUPER_ADMIN_ID;
 
-        const canControl = isSuperAdmin || user.approved === true;
+        const canControl = isAdmin || user.approved === true;
 
         // ================= START =================
         if (text === "เริ่ม") {
+
+            if (isAdmin) {
+                return client.replyMessage(event.replyToken, {
+                    type: "text",
+                    text: adminMenu()
+                });
+            }
+
             return client.replyMessage(event.replyToken, {
                 type: "text",
-                text: introMessage(user)
+                text: introMessage(user, isAdmin)
             });
         }
 
