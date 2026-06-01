@@ -54,7 +54,13 @@ async function getUser(userId) {
     if (!dbReady) return { userId, role: "user", approved: false };
 
     let user = await User.findOne({ userId });
-    if (!user) user = await User.create({ userId });
+    if (!user) {
+    user = await User.create({
+        userId,
+        role: "user",
+        approved: false
+    });
+}
 
     return user;
 }
@@ -185,7 +191,9 @@ app.post('/webhook', async (req, res) => {
 
         const user = await getUser(userId);
 
-        const isSuperAdmin = user.role === "admin";
+        const isSuperAdmin =
+    user.role === "admin" ||
+    userId === SUPER_ADMIN_ID;
         const canControl = isSuperAdmin || user.approved;
 
         // ================= START =================
