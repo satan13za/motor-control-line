@@ -294,7 +294,7 @@ app.post('/webhook', async (req, res) => {
             const isManageAdmin = isAdmin || role === "admin";
 
             // ================= START =================
-            if (text === "เริ่ม") {
+            if (text === "เมนู") {
                 if (isManageAdmin) {
                     await client.replyMessage(event.replyToken, {
                         type: "text",
@@ -512,7 +512,7 @@ app.post('/webhook', async (req, res) => {
             // ================= UNKNOWN COMMAND =================
             await client.replyMessage(event.replyToken, {
                 type: "text",
-                text: "พิมพ์ 'เริ่ม' เพื่อใช้งาน"
+                text: "พิมพ์ 'เมนู' เพื่อใช้งาน"
             });
 
         } catch (error) {
