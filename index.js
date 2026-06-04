@@ -179,7 +179,7 @@ function introMessage(user, isSuperAdmin) {
     }
 
 ━━━━━━━━━━━━━━━━━━━━
-📊 สถานะ:
+📊 สถานะปัจจุบัน
 ⚙️ มอเตอร์: ${motorData.state}
 📶 อุปกรณ์: ${isOnline() ? "ออนไลน์" : "ออฟไลน์"}
 ⚠️ Overload: ${motorData.overload ? "TRIP" : "ปกติ"}
