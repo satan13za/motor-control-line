@@ -76,10 +76,9 @@ async function getUser(userId) {
 let motorData = {
     state: "STOP",
     lastHeartbeat: 0,
-    fault: false,
-    faultCode: null,
-    pending: false // เพิ่มการประกาศตั้งแต่เริ่มต้น
-}; 
+    overload: false,
+    pending: false
+};
 
 let pendingCmdId = null;
 
@@ -115,8 +114,7 @@ setInterval(() => {
         Date.now() - motorData.lastHeartbeat > timeout
     ) {
         motorData.state = "STOP";
-        motorData.fault = true;
-        motorData.faultCode = "ESP32_OFFLINE";
+        motorData.overload = false;
 
         if (!offlineNotified && SUPER_ADMIN_ID) {
             offlineNotified = true;
@@ -154,9 +152,6 @@ function adminMenu() {
 📊 สถานะ
 ⚙️ เปิด / ปิด
 
-♻️ reset
-รีเซ็ต fault
-
 ━━━━━━━━━━━━━━
 🕒 ${getThaiTime()}`;
 }
@@ -187,7 +182,7 @@ function introMessage(user, isSuperAdmin) {
 📊 สถานะ:
 ⚙️ มอเตอร์: ${motorData.state}
 📶 อุปกรณ์: ${isOnline() ? "ออนไลน์" : "ออฟไลน์"}
-⚠️ Fault: ${motorData.fault ? "ผิดปกติ" : "ปกติ"}
+⚠️ Overload: ${motorData.overload ? "TRIP" : "ปกติ"}
 
 ━━━━━━━━━━━━━━━━━━━━
 📌 คำสั่ง:
@@ -198,7 +193,7 @@ ${!canControl ? "👉 ดูสถานะได้เท่านั้น" : 
 
 // ================= REPORT =================
 app.post('/api/motor/report', async (req, res) => {
-    const { state, faultCode } = req.body;
+    const { state, overload } = req.body;
 
     motorData.lastHeartbeat = Date.now();
 
@@ -220,37 +215,42 @@ app.post('/api/motor/report', async (req, res) => {
         }).catch(console.error);
     }
 
-    if (state && state !== motorData.state) {
-        motorData.state = state;
+    const prevState = motorData.state;
+const prevOverload = motorData.overload;
 
-        // ================= NOTIFY ADMIN =================
-        if (SUPER_ADMIN_ID) {
-            let msg = "";
+if (
+    state !== prevState ||
+    overload !== prevOverload
+) {
 
-            if (state === "RUN") {
-                msg = "✅ มอเตอร์ทำงานแล้ว";
-            } else if (state === "STOP") {
-                msg = "🛑 มอเตอร์หยุดแล้ว";
-            } else if (state === "FAULT") {
-                msg = `⚠️ FAULT: ${faultCode || "UNKNOWN"}`;
-            }
+    motorData.state = state;
+    motorData.overload = overload === true;
 
-            if (msg) {
-                client.pushMessage(SUPER_ADMIN_ID, {
-                    type: "text",
-                    text: msg
-                }).catch(console.error);
-            }
+    // ================= NOTIFY ADMIN =================
+    if (SUPER_ADMIN_ID) {
+
+        let msg = "";
+
+        if (motorData.overload) {
+            msg = "⚠️ OVERLOAD TRIP";
+        }
+        else if (state === "RUN") {
+            msg = "✅ มอเตอร์ทำงานแล้ว";
+        }
+        else if (state === "STOP") {
+            msg = "🛑 มอเตอร์หยุดแล้ว";
+        }
+
+        if (msg) {
+            client.pushMessage(SUPER_ADMIN_ID, {
+                type: "text",
+                text: msg
+            }).catch(console.error);
         }
     }
+}
 
-    if (state === "FAULT") {
-        motorData.fault = true;
-        motorData.faultCode = faultCode || "UNKNOWN";
-    } else {
-        motorData.fault = false;
-        motorData.faultCode = null;
-    }
+    
 
     res.sendStatus(200);
 });
@@ -269,8 +269,7 @@ app.get('/api/motor/command', (req, res) => {
         command: motorCommand.cmd,
         pending: motorData.pending,
         state: motorData.state,
-        fault: motorData.fault,
-        faultCode: motorData.faultCode
+       overload: motorData.overload
     });
 });
 
@@ -432,37 +431,12 @@ app.post('/webhook', async (req, res) => {
                 continue;
             }
 
-            // ================= RESET =================
-            if (text === "reset") {
-                if (!canControl) {
-                    await client.replyMessage(event.replyToken, { type: "text", text: "❌ ไม่มีสิทธิ์ควบคุม" });
-                    continue;
-                }
-                if (!isOnline()) {
-                    await client.replyMessage(event.replyToken, { type: "text", text: "⚠️ ระบบ OFFLINE อยู่" });
-                    continue;
-                }
-                if (!motorData.fault) {
-                    await client.replyMessage(event.replyToken, { type: "text", text: "✅ ระบบไม่มี FAULT" });
-                    continue;
-                }
-                if (lastCommandTime[userId] && Date.now() - lastCommandTime[userId] < 2000) {
-                    await client.replyMessage(event.replyToken, { type: "text", text: "⏳ กรุณารอ 2 วินาที" });
-                    continue;
-                }
-
-                lastCommandTime[userId] = Date.now();
-                motorCommand = { cmd: "RESET", timestamp: Date.now() };
-
-                await client.replyMessage(event.replyToken, { type: "text", text: "♻️ ส่งคำสั่ง RESET แล้ว" });
-                continue;
-            }
             
             // ================= STATUS =================
             if (text === "สถานะ") {
                 await client.replyMessage(event.replyToken, {
                     type: "text",
-                    text: `📊 สถานะ\n⚙️ ${motorData.state}\n📶 ${isOnline() ? "ONLINE" : "OFFLINE"}\n⚠️ Fault: ${motorData.fault ? "YES" : "NO"}`
+                    text: `📊 สถานะ\n⚙️ ${motorData.state}\n📶 ${isOnline() ? "ONLINE" : "OFFLINE"}\n⚠️ Overload: ${motorData.overload ? "TRIP" : "NORMAL"}`
                 });
                 continue;
             }
